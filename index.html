@@ -563,7 +563,7 @@
   // come within SNAP (px). Snaps each axis independently, picking the nearest
   // matching edge (left/right/top/bottom alignment with each target).
   function edgeSnap(x, y, w, h, targets){
-    var SNAP = 12, fx = x, fy = y;
+    var SNAP = 6, fx = x, fy = y;   // tight — only snap when very close to a boundary
     var foundX = false, dx = 1e9;
     for(var i=0;i<targets.length;i++){
       var t = targets[i];
