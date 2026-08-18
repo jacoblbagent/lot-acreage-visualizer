@@ -144,7 +144,7 @@
 
     <div class="group">
       <h2>Driveway</h2>
-      <p class="items-hint">click one spot, then a second spot to place a straight driveway — it expands to ~1.5× a car (≈9&nbsp;ft) wide. Drag it to move, use the end handles to rotate.</p>
+      <p class="items-hint">click one spot, then a second spot to place a straight driveway — it expands to ~1.5× a car (≈9&nbsp;ft) wide. Drag it to move; drag an end handle to reposition that end.</p>
       <div class="driveway-actions">
         <button id="drivewayClear" class="driveway-btn">Clear</button>
         <span id="drivewayCount" class="driveway-count">0 pts</span>
@@ -578,24 +578,25 @@
     circle.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       ev.stopPropagation();
-      var p = svgPoint(ev);
-      // Grab point is the pivot (handle sits on the endpoint); rotating simply
-      // swings all points so the branch follows the pointer angle about the anchor.
-      var startPtr = Math.atan2(p.y - anchorPt.y, p.x - anchorPt.x);
+      var off = svgPoint(ev);
+      var actualIdx = (handleIdx === 0) ? 0 : state.driveway.length - 1;
+      var startX = state.driveway[actualIdx].x, startY = state.driveway[actualIdx].y;
+      var start = { dx: off.x - startX, dy: off.y - startY };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
       function onMove(e){
         var q = svgPoint(e);
-        var ptr = Math.atan2(q.y - anchorPt.y, q.x - anchorPt.x);
-        // delta relative to pointer: preserve the offset between grab-point and neighbor
-        var delta = (ptr - startPtr);
-        // rotate all points around the held end
-        state.driveway = state.driveway.map(function(pt){
-          var dx = pt.x - anchorPt.x, dy = pt.y - anchorPt.y;
-          var cos = Math.cos(delta), sin = Math.sin(delta);
-          return { x: anchorPt.x + dx*cos - dy*sin,
-                   y: anchorPt.y + dx*sin + dy*cos };
-        });
+        if(!isFinite(q.x) || !isFinite(q.y)) return;
+        var nx = q.x - start.dx, ny = q.y - start.dy;
+        if(!isFinite(nx) || !isFinite(ny)) return;
+        // move only the endpoint being dragged; keep the other end fixed
+        var lotD = lotDims();
+        var s = Math.min((SIZE-2*PAD)/lotD.w, (SIZE-2*PAD)/lotD.d);
+        var lx0 = (SIZE - lotD.w*s)/2, ly0 = (SIZE - lotD.d*s)/2;
+        nx = Math.max(lx0, Math.min(nx, lx0 + lotD.w*s));
+        ny = Math.max(ly0, Math.min(ny, ly0 + lotD.d*s));
+        state.driveway[actualIdx].x = nx;
+        state.driveway[actualIdx].y = ny;
         render();
       }
       function onUp(){
