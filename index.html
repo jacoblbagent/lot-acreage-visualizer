@@ -312,20 +312,21 @@
     if(state.driveway.length > 1){
       var dwFt = 6 * 1.5;              // 1.5× a car's width (car ≈ 6 ft)
       var dwPx = dwFt * scale;
-      var pts = state.driveway.map(function(pt){ return pt.x + ',' + pt.y; }).join(' ');
+      // smooth the path into a curve whenever there are 3+ points
+      var d = drivewayD(state.driveway);
       // clip the driveway to the lot boundary so it is cut off at the edge
       var dvClip = el('clipPath', { id:'dvClip' });
       el('rect', { x:lotBox.x, y:lotBox.y, width:lotBox.w, height:lotBox.h }, dvClip);
       var dvGroup = el('g', { 'clip-path':'url(#dvClip)' });
       // transparent grab/hit area (a bit wider than the pavement) for easy selection
-      el('polyline', { points:pts, fill:'none', stroke:'rgba(255,255,255,0.001)', 'stroke-width':dwPx+18,
+      el('path', { d:d, fill:'none', stroke:'rgba(255,255,255,0.001)', 'stroke-width':dwPx+18,
         'stroke-linecap':'round', 'stroke-linejoin':'round', 'cursor':'move', 'pointer-events':'stroke' }, dvGroup);
       // main pavement
-      el('polyline', { points:pts, fill:'none', stroke:'#565d6b', 'stroke-width':dwPx,
+      el('path', { d:d, fill:'none', stroke:'#565d6b', 'stroke-width':dwPx,
         'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-opacity':0.9,
         'pointer-events':'none' }, dvGroup);
       // subtle centerline
-      el('polyline', { points:pts, fill:'none', stroke:'#3a4150', 'stroke-width':1,
+      el('path', { d:d, fill:'none', stroke:'#3a4150', 'stroke-width':1,
         'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'5 6',
         'stroke-opacity':0.6, 'pointer-events':'none' }, dvGroup);
       makeDrivewayDraggable(dvGroup, dwPx);
@@ -538,8 +539,32 @@
   }
 
   // Insert / move points on the driveway. A drag moves the whole path (clipped to
-// the lot); a plain click inserts a new vertex on the nearest segment, which
-// gains its own pivot handle.
+  // the lot); a plain click inserts a new vertex on the nearest segment, which
+  // gains its own pivot handle.
+  function drivewayD(pts){
+    if(pts.length < 2) return '';
+    // 2 points -> straight line
+    if(pts.length === 2){
+      return 'M ' + pts[0].x + ' ' + pts[0].y + ' L ' + pts[1].x + ' ' + pts[1].y;
+    }
+    // 3+ points -> smooth Catmull-Rom curve through all of them
+    var d = 'M ' + pts[0].x.toFixed(2) + ' ' + pts[0].y.toFixed(2);
+    for(var i=0;i<pts.length-1;i++){
+      var p0 = pts[i-1] || pts[i];
+      var p1 = pts[i];
+      var p2 = pts[i+1];
+      var p3 = pts[i+2] || p2;
+      var c1x = p1.x + (p2.x - p0.x)/6;
+      var c1y = p1.y + (p2.y - p0.y)/6;
+      var c2x = p2.x - (p3.x - p1.x)/6;
+      var c2y = p2.y - (p3.y - p1.y)/6;
+      d += ' C ' + c1x.toFixed(2) + ' ' + c1y.toFixed(2) +
+           ', ' + c2x.toFixed(2) + ' ' + c2y.toFixed(2) +
+           ', ' + p2.x.toFixed(2) + ' ' + p2.y.toFixed(2);
+    }
+    return d;
+  }
+
 function makeDrivewayDraggable(group, dwPx){
     group.addEventListener('mousedown', function(ev){
       ev.preventDefault();
@@ -592,6 +617,7 @@ function makeDrivewayDraggable(group, dwPx){
     if(best === -1) return;
     state.driveway.splice(best+1, 0, { x:pt.x, y:pt.y });
     state.drivewayDone = true;
+    if($id('drivewayCount')) $id('drivewayCount').textContent = state.driveway.length + ' pts';
   }
   function distToSegment(p, a, b){
     var dx = b.x-a.x, dy = b.y-a.y;
