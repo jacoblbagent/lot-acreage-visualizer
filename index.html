@@ -183,6 +183,7 @@
   var ACRE = 43560, PAD = 52, SIZE = 620;
   var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:false,
                houseFx:null, houseFy:null, driveway:[], drivewayDone:false,
+               lotW:null, lotD:null,
                lastInteract:null, history:[] };
   var LS_KEY = 'lotAcreageViz';
   var HISTORY_CAP = 200;
@@ -381,7 +382,11 @@
   }
 
   function lotDims(){
-    // lot width:depth from lotShape slider; 0=square, neg=wider, pos=taller
+    // Explicit width/depth override (set by edge-dragging) takes precedence.
+    // Otherwise derive width:depth from the lot shape slider (0=square).
+    if(state.lotW != null && state.lotD != null){
+      return { w:state.lotW, d:state.lotD };
+    }
     var area = state.lotAcres * ACRE;
     var ratio = Math.pow(1.8, -state.lotShape);   // width:depth
     var w = Math.sqrt(area * ratio), d = area / w;
@@ -420,6 +425,20 @@
     el('rect', { x:lx+inset, y:ly+inset, width:Math.max(0,W*scale-2*inset),
       height:Math.max(0,D*scale-2*inset), fill:'none', stroke:'#2b3a52',
       'stroke-width':1, 'stroke-dasharray':'4 4' });
+
+    // resize handles on the lot edges (drag to change width/height)
+    var hw = 10, hd = 10, hc = '#82aaff';
+    var edges = [
+      { x:lx+W*scale/2-hw/2, y:ly-hd/2,        w:hw, h:hd, dir:'n', key:'D', sign:-1 },
+      { x:lx+W*scale/2-hw/2, y:ly+D*scale-hd/2, w:hw, h:hd, dir:'s', key:'D', sign:1 },
+      { x:lx-hw/2,           y:ly+D*scale/2-hd/2, w:hw, h:hd, dir:'w', key:'W', sign:-1 },
+      { x:lx+W*scale-hw/2,   y:ly+D*scale/2-hd/2, w:hw, h:hd, dir:'e', key:'W', sign:1 }
+    ];
+    edges.forEach(function(e){
+      var r = el('rect', { x:e.x, y:e.y, width:e.w, height:e.h, fill:hc,
+        stroke:'#0b0e14', 'stroke-width':1, cursor:(e.dir==='n'||e.dir==='s')?'ns-resize':'ew-resize' });
+      makeLotResize(r, e);
+    });
 
     // house footprint — width:depth ratio from shape slider; 0=square, neg=wider, pos=taller
     var hArea = state.houseSqft;
@@ -684,6 +703,50 @@
       if(!moved) break;
     }
     return { x:x, y:y };
+  }
+
+  // Drag a lot edge handle to resize the lot's width/depth. Converts the pixel
+  // delta to feet using the current scale, updates the explicit override dims,
+  // syncs the acreage readout, and records the change for undo.
+  function makeLotResize(rect, edge){
+    rect.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      beginChange();
+      var start = { x: svgPoint(ev).x, y: svgPoint(ev).y,
+                    W: state.lotW != null ? state.lotW : lotDims().w,
+                    D: state.lotD != null ? state.lotD : lotDims().d,
+                    pxPerFt: null };
+      // capture current px-per-ft before any resize
+      var dims = lotDims(), avail = SIZE - 2*PAD;
+      start.pxPerFt = Math.min(avail/dims.w, avail/dims.d);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(ev2){
+        var p = svgPoint(ev2);
+        var dFt = 0;
+        if(edge.key === 'W') dFt = (p.x - start.x) / start.pxPerFt;
+        else                 dFt = (p.y - start.y) / start.pxPerFt;
+        var MIN = 20, MAX = 1500;
+        var W = start.W, D = start.D;
+        if(edge.key === 'W') W = Math.max(MIN, Math.min(MAX, start.W + (edge.dir==='w' ? -dFt : dFt)));
+        else                 D = Math.max(MIN, Math.min(MAX, start.D + (edge.dir==='n' ? -dFt : dFt)));
+        state.lotW = W; state.lotD = D;
+        state.lotAcres = (W*D)/ACRE;
+        // sync the acreage input and clear preset highlight
+        var ai = $id('lotAcres'); if(ai) ai.value = state.lotAcres.toFixed(3);
+        document.querySelectorAll('#presets button').forEach(function(b){ b.classList.remove('on'); });
+        render();
+      }
+      function onUp(){
+        commitChange();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+    });
+    // clicking/handling shouldn't start driveway drawing
+    rect.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    rect.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
   }
 
   // Drag the house anywhere within the lot, clamped on all sides. Stores its
@@ -1045,7 +1108,7 @@ function makeDrivewayDraggable(group, dwPx){
     // lot acreage input
     $id('lotAcres').addEventListener('input', function(){
       var v = parseFloat(this.value);
-      if(!isNaN(v) && v > 0){ state.lotAcres = v; render(); }
+      if(!isNaN(v) && v > 0){ state.lotAcres = v; state.lotW = state.lotD = null; render(); }
     });
 
     // shape slider: 0=middle, negative=wider, positive=taller
@@ -1064,6 +1127,7 @@ function makeDrivewayDraggable(group, dwPx){
     document.querySelectorAll('#presets button').forEach(function(btn){
       btn.addEventListener('click', function(){
         state.lotAcres = parseFloat(btn.dataset.a);
+        state.lotW = state.lotD = null;
         $id('lotAcres').value = state.lotAcres;
         document.querySelectorAll('#presets button').forEach(function(b){ b.classList.remove('on'); });
         btn.classList.add('on');
