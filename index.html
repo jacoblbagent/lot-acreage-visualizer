@@ -464,11 +464,11 @@
         nx = sn.x; ny = sn.y;
         nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
         ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+        // never overlap: only outside boundaries may touch outside boundaries.
+        // push the dragged item out to exact contact with the house/other items.
+        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
+        nx = no.x; ny = no.y;
       }
-      // never overlap: only outside boundaries may touch outside boundaries.
-      // push the dragged item out to exact contact with the house/other items.
-      var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
-      nx = no.x; ny = no.y;
       state.items[it.id].x = nx;
       state.items[it.id].y = ny;
       rect.setAttribute('x', nx);
