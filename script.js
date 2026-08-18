@@ -1,0 +1,1106 @@
+(function(){
+  var ACRE = 43560, PAD = 52, SIZE = 620;
+  var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:false,
+               houseFx:null, houseFy:null, driveway:[], drivewayDone:false,
+               lotW:null, lotD:null,
+               lastInteract:null, history:[] };
+  var LS_KEY = 'lotAcreageViz';
+  var HISTORY_CAP = 200;
+
+  // ---- persistence: history of added/deleted/moved items, kept in localStorage ----
+  function saveState(){
+    try{
+      var snap = {
+        items: state.items,
+        driveway: state.driveway,
+        drivewayDone: state.drivewayDone,
+        houseFx: state.houseFx, houseFy: state.houseFy,
+        history: state.history.slice(-HISTORY_CAP)
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(snap));
+    }catch(e){ /* storage unavailable — ignore */ }
+  }
+  function loadState(){
+    try{
+      var raw = localStorage.getItem(LS_KEY);
+      if(!raw) return;
+      var s = JSON.parse(raw);
+      if(s && typeof s === 'object'){
+        if(s.items) state.items = s.items;
+        if(Array.isArray(s.driveway)) state.driveway = s.driveway;
+        if(typeof s.drivewayDone === 'boolean') state.drivewayDone = s.drivewayDone;
+        if(s.houseFx !== undefined) state.houseFx = s.houseFx;
+        if(s.houseFy !== undefined) state.houseFy = s.houseFy;
+        if(Array.isArray(s.history)) state.history = s.history.slice(-HISTORY_CAP);
+      }
+    }catch(e){ /* ignore corrupt */ }
+  }
+  function recordHistory(entry){
+    entry.t = Date.now();
+    state.history.push(entry);
+    if(state.history.length > HISTORY_CAP) state.history = state.history.slice(-HISTORY_CAP);
+    saveState();
+  }
+
+  // ---- undo / redo (snapshot of the whole scene) ----
+  var undoStack = [], redoStack = [], pendingSnap = null;
+  function snapScene(){
+    var items = {};
+    for(var k in state.items){
+      items[k] = state.items[k] === null ? null : { x:state.items[k].x, y:state.items[k].y };
+    }
+    return {
+      items: items,
+      driveway: state.driveway.map(function(p){ return {x:p.x, y:p.y}; }),
+      drivewayDone: state.drivewayDone,
+      houseFx: state.houseFx, houseFy: state.houseFy
+    };
+  }
+  function applyScene(s){
+    state.items = s.items;
+    state.driveway = s.driveway.map(function(p){ return {x:p.x, y:p.y}; });
+    state.drivewayDone = s.drivewayDone;
+    state.houseFx = s.houseFx; state.houseFy = s.houseFy;
+  }
+  function beginChange(){ pendingSnap = snapScene(); }
+  function commitChange(){
+    if(!pendingSnap) return;
+    undoStack.push(pendingSnap);
+    pendingSnap = null;
+    if(undoStack.length > 100) undoStack.shift();
+    redoStack.length = 0;      // a new change invalidates redo
+    saveState();
+    syncUndoRedo();
+  }
+  function undo(){
+    if(!undoStack.length) return false;
+    redoStack.push(snapScene());
+    applyScene(undoStack.pop());
+    syncButtons();
+    syncUndoRedo();
+    syncDrivewayUI();
+    render();
+    saveState();
+    return true;
+  }
+  function redo(){
+    if(!redoStack.length) return false;
+    undoStack.push(snapScene());
+    applyScene(redoStack.pop());
+    syncButtons();
+    syncUndoRedo();
+    syncDrivewayUI();
+    render();
+    saveState();
+    return true;
+  }
+  function syncButtons(){
+    document.querySelectorAll('#items button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.id in state.items);
+    });
+  }
+  function syncUndoRedo(){
+    var u = document.getElementById('undoBtn');
+    var r = document.getElementById('redoBtn');
+    if(u) u.disabled = !undoStack.length;
+    if(r) r.disabled = !redoStack.length;
+  }
+  function syncDrivewayUI(){
+    var c = $id('drivewayCount');
+    if(!c) return;
+    if(state.drivewayDone) c.textContent = state.driveway.length + ' pts';
+    else if(state.driveway.length === 1) c.textContent = 'set end point';
+    else c.textContent = '0 pts';
+  }
+
+  // Everyday structures with realistic average footprint sizes (width × depth, ft),
+  // grouped by category (cat) in the sidebar.
+  var ITEMS = [
+    // ---------- Vehicles ----------
+    { id:'car',      name:'Car',          w:6,  d:16, color:'#e0672b', cat:'Vehicles' },
+    // ---------- Buildings ----------
+    { id:'garage1',  name:'1-car garage', w:12, d:20, color:'#9aa0a8', cat:'Buildings' },
+    { id:'garage2',  name:'2-car garage', w:22, d:24, color:'#8b929b', cat:'Buildings' },
+    { id:'shed',     name:'Shed',         w:10, d:12, color:'#8a6a4d', cat:'Buildings' },
+    { id:'greenhouse',name:'Greenhouse',  w:10, d:12, color:'#9ecb93', cat:'Buildings' },
+    { id:'coop',     name:'Chicken coop', w:8,  d:10, color:'#c79a54', cat:'Buildings' },
+    { id:'playhouse',name:'Playhouse',    w:8,  d:10, color:'#c98a4e', cat:'Buildings' },
+    { id:'treehouse',name:'Tree house',   w:8,  d:8,  color:'#8a6a4d', cat:'Buildings' },
+    // ---------- Patio & Outdoor ----------
+    { id:'deck',     name:'Deck',         w:16, d:12, color:'#a9744f', cat:'Patio & Outdoor' },
+    { id:'patio',    name:'Patio',        w:14, d:14, color:'#9aa0a8', cat:'Patio & Outdoor' },
+    { id:'pool',     name:'Pool',         w:16, d:32, color:'#3f9ad6', cat:'Patio & Outdoor' },
+    { id:'hottub',   name:'Hot tub',      w:7,  d:7,  color:'#7cc7e8', cat:'Patio & Outdoor' },
+    { id:'firepit',  name:'Fire pit',     w:5,  d:5,  color:'#c9785a', cat:'Patio & Outdoor' },
+    { id:'bbq',      name:'BBQ / grill',  w:5,  d:7,  color:'#9aa5b1', cat:'Patio & Outdoor' },
+    { id:'gazebo',   name:'Gazebo',       w:12, d:12, color:'#b08968', cat:'Patio & Outdoor' },
+    { id:'picnic',   name:'Picnic table', w:6,  d:10, color:'#a8906a', cat:'Patio & Outdoor' },
+    { id:'hammock',  name:'Hammock',      w:5,  d:12, color:'#c9a86a', cat:'Patio & Outdoor' },
+    // ---------- Play & Kids ----------
+    { id:'playset',  name:'Play set',     w:10, d:12, color:'#e3b341', cat:'Play & Kids' },
+    { id:'swings',   name:'Swing set',    w:8,  d:14, color:'#e3a541', cat:'Play & Kids' },
+    { id:'tramp',    name:'Trampoline',   w:14, d:14, color:'#d2a04a', cat:'Play & Kids' },
+    { id:'sandbox',  name:'Sandbox',      w:6,  d:8,  color:'#d8b471', cat:'Play & Kids' },
+    // ---------- Garden & Landscape ----------
+    { id:'garden',   name:'Garden',       w:8,  d:16, color:'#7fb069', cat:'Garden & Landscape' },
+    { id:'berries',  name:'Berry patch',  w:6,  d:10, color:'#6a9e6d', cat:'Garden & Landscape' },
+    { id:'pond',     name:'Pond',         w:10, d:14, color:'#3f9ad6', cat:'Garden & Landscape' },
+    { id:'birdbath', name:'Bird bath',    w:3,  d:3,  color:'#c9ccd2', cat:'Garden & Landscape' },
+    { id:'compost',  name:'Compost bin',  w:4,  d:4,  color:'#6b5138', cat:'Garden & Landscape' },
+    // ---------- Pets & Animals ----------
+    { id:'dogrun',   name:'Dog run',      w:8,  d:20, color:'#b08968', cat:'Pets & Animals' },
+    // ---------- Utility & Storage ----------
+    { id:'mailbox',  name:'Mailbox',      w:2,  d:3,  color:'#d0d3d8', cat:'Utility & Storage' },
+    { id:'trash',    name:'Trash cans',   w:3,  d:6,  color:'#6b7280', cat:'Utility & Storage' },
+    { id:'well',     name:'Well',         w:4,  d:4,  color:'#9aa0a8', cat:'Utility & Storage' },
+    { id:'hvac',     name:'AC unit',      w:5,  d:5,  color:'#c9ccd2', cat:'Utility & Storage' },
+    { id:'generator',name:'Generator',    w:3,  d:5,  color:'#8b929b', cat:'Utility & Storage' },
+    { id:'woodpile', name:'Wood pile',    w:6,  d:10, color:'#8a5632', cat:'Utility & Storage' },
+    // ---------- Trees ----------
+    { id:'treeS',    name:'Tree (small)', w:6,  d:6,  color:'#4a7c51', tree:true, cat:'Trees' },
+    { id:'treeM',    name:'Tree (med)',   w:14, d:14, color:'#3f6e46', tree:true, cat:'Trees' },
+    { id:'treeL',    name:'Tree (large)', w:24, d:24, color:'#355e3b', tree:true, cat:'Trees' }
+  ];
+
+  var svg = document.getElementById('view');
+  var NS = 'http://www.w3.org/2000/svg';
+
+  // shared drag-feedback refs (set each render, used by makeDraggable)
+  var activeHouseBox = null;   // current house pixel bounds
+  var houseOverlay = null;     // red overlay rect shown while dragging over the house
+  var activeItemBoxes = [];    // {id,x,y,w,h} for every currently-viewed item
+  var itemOverlays = {};       // id -> red overlay rect for each item
+
+  // ---- multi-select: marquee + group drag ----
+  var selection = {};          // {id: true} for selected items, plus 'house'
+  var placedEls = {};          // item id -> {el, tree, iw, ih, bx, by} for group-drag repositioning
+  var placedHouseEl = null;    // house rect element
+  var marqueeEl = null;        // selection marquee rect
+  var marqueeStart = null;     // {x,y} start point of an in-progress marquee
+
+  function isSelected(id){ return selection[id] === true; }
+  function selCount(){
+    var n = 0; for(var k in selection){ if(selection[k]) n++; } return n;
+  }
+
+  function $id(i){ return document.getElementById(i); }
+  function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
+  function fmtAcres(a){ return a.toFixed(3); }
+  function clearSvg(){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
+
+  function el(tag, attrs, parent){
+    var e = document.createElementNS(NS, tag);
+    if(attrs){ for(var k in attrs){ e.setAttribute(k, attrs[k]); } }
+    (parent || svg).appendChild(e);
+    return e;
+  }
+  function txt(x, y, s, o){
+    o = o || {};
+    el('text', { x:x, y:y, 'text-anchor':o.anchor||'middle', 'font-size':o.size||12,
+      fill:o.fill||'#8b93a7', 'font-weight':o.weight||'normal' }).textContent = s;
+  }
+
+  function lotDims(){
+    // Explicit width/depth override (set by edge-dragging) takes precedence.
+    // Otherwise derive width:depth from the lot shape slider (0=square).
+    if(state.lotW != null && state.lotD != null){
+      return { w:state.lotW, d:state.lotD };
+    }
+    var area = state.lotAcres * ACRE;
+    var ratio = Math.pow(1.8, -state.lotShape);   // width:depth
+    var w = Math.sqrt(area * ratio), d = area / w;
+    return { w:w, d:d };
+  }
+  function shapeLabel(ratio){
+    if(ratio >= 1) return ratio.toFixed(1) + ' : 1';   // wider than tall
+    return '1 : ' + (1/ratio).toFixed(1);              // taller than wide
+  }
+  function footLabel(n){
+    if(n >= 100) return fmt(n) + '\u2032';
+    return Math.round(n) + '\u2032';
+  }
+
+  function render(){
+    var dims = lotDims(), W = dims.w, D = dims.d;
+    var lotSqft = W * D;
+    if(lotSqft <= 0 || !isFinite(lotSqft)) return;
+
+    // scale to fit
+    var avail = SIZE - 2*PAD;
+    var scale = Math.min(avail/W, avail/D);
+
+    clearSvg();
+    svg.setAttribute('viewBox', '0 0 '+SIZE+' '+SIZE);
+
+    var lx = (SIZE - W*scale)/2, ly = (SIZE - D*scale)/2;
+    var lotBox = { x:lx, y:ly, w:W*scale, h:D*scale };
+
+    // lot outline — lawn surface
+    el('rect', { x:lx, y:ly, width:W*scale, height:D*scale,
+      fill:'#2c4a2e', stroke:'#3d4c63', 'stroke-width':1.5 });
+
+    // yard guide (dashed inner)
+    var inset = Math.max(6, Math.min(W*scale, D*scale)*0.02);
+    el('rect', { x:lx+inset, y:ly+inset, width:Math.max(0,W*scale-2*inset),
+      height:Math.max(0,D*scale-2*inset), fill:'none', stroke:'#2b3a52',
+      'stroke-width':1, 'stroke-dasharray':'4 4' });
+
+    // resize handles on the lot edges (drag to change width/height)
+    var hw = 10, hd = 10, hc = '#82aaff';
+    var edges = [
+      { x:lx+W*scale/2-hw/2, y:ly-hd/2,        w:hw, h:hd, dir:'n', key:'D', sign:-1 },
+      { x:lx+W*scale/2-hw/2, y:ly+D*scale-hd/2, w:hw, h:hd, dir:'s', key:'D', sign:1 },
+      { x:lx-hw/2,           y:ly+D*scale/2-hd/2, w:hw, h:hd, dir:'w', key:'W', sign:-1 },
+      { x:lx+W*scale-hw/2,   y:ly+D*scale/2-hd/2, w:hw, h:hd, dir:'e', key:'W', sign:1 }
+    ];
+    edges.forEach(function(e){
+      var r = el('rect', { x:e.x, y:e.y, width:e.w, height:e.h, fill:hc,
+        stroke:'#0b0e14', 'stroke-width':1, cursor:(e.dir==='n'||e.dir==='s')?'ns-resize':'ew-resize' });
+      makeLotResize(r, e);
+    });
+
+    // house footprint — width:depth ratio from shape slider; 0=square, neg=wider, pos=taller
+    var hArea = state.houseSqft;
+    var hRatio = Math.pow(1.8, -state.shape);   // width:depth; middle (0) => 1:1 square
+    var hWidth = Math.sqrt(hArea * hRatio);
+    var hDepth = hArea / hWidth;
+
+    // clamp house inside the lot (single-story must fit)
+    var maxW = W*0.96, maxD = D*0.96;
+    if(hWidth > maxW || hDepth > maxD){
+      var r = Math.min(maxW/hWidth, maxD/hDepth);
+      hWidth *= r; hDepth *= r;
+    }
+
+    var hw_px = hWidth*scale, hd_px = hDepth*scale;
+    var hx, hy;
+    if(state.houseFx !== null){
+      // max corner so the house stays inside the lot
+      var spanX = W*scale - hw_px, spanY = D*scale - hd_px;
+      hx = lx + state.houseFx * spanX;
+      hy = ly + state.houseFy * spanY;
+      hx = Math.max(lx, Math.min(hx, lx + spanX));
+      hy = Math.max(ly, Math.min(hy, ly + spanY));
+    } else {
+      hx = lx + (W*scale - hw_px)/2;
+      hy = ly + (D*scale - hd_px)/2;
+    }
+    var houseRect = el('rect', { x:hx, y:hy, width:hw_px, height:hd_px,
+      fill:'#58a6ff', 'fill-opacity':0.35, stroke:'#58a6ff', 'stroke-width':2, 'cursor':'move' });
+
+    // red overlay shown while an item is dragged over the house (no permanent border)
+    activeHouseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
+    houseOverlay = el('rect', { x:hx, y:hy, width:hWidth*scale, height:hDepth*scale,
+      fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
+
+    // house label
+    var hsq = fmt(hWidth*hDepth) + ' sq ft';
+    var hwPx = hWidth*scale, hdPx = hDepth*scale;
+    var houseLabelEl = el('text', { x:hx+hwPx/2, y:hy+hdPx/2+4, 'text-anchor':'middle',
+      'font-size':'13', fill:'#0b0e14', 'font-weight':'700', 'pointer-events':'none' });
+    houseLabelEl.textContent = hsq;
+    makeHouseDraggable(houseRect, houseLabelEl, hw_px, hd_px, lotBox);
+
+    // dimension labels
+    var lw = Math.round(W*scale), ld = Math.round(D*scale);
+    var lxs = (W*scale < 110) ? 10 : 22;
+    txt(SIZE/2, ly+D*scale+lxs, footLabel(W));
+    txt(lx-lxs, ly+D*scale/2, footLabel(D), { anchor:'end' });
+
+    // ---- driveway (click-traced path, expanded to ~1.5× car width) ----
+    if(state.driveway.length > 1){
+      var dwFt = 6 * 1.5;              // 1.5× a car's width (car ≈ 6 ft)
+      var dwPx = dwFt * scale;
+      // smooth the path into a curve whenever there are 3+ points
+      var d = drivewayD(state.driveway);
+      // clip the driveway to the lot boundary AND cut it off at the house edge.
+      // One path: lot rect (outer) + house rect (inverse winding) with evenodd
+      // so the driveway is hidden under the house and beyond the lot.
+      var clipD =
+        'M ' + lotBox.x + ' ' + lotBox.y +
+        ' H ' + (lotBox.x + lotBox.w) +
+        ' V ' + (lotBox.y + lotBox.h) +
+        ' H ' + lotBox.x + ' Z ' +
+        'M ' + hx + ' ' + hy +
+        ' H ' + (hx + hw_px) +
+        ' V ' + (hy + hd_px) +
+        ' H ' + hx + ' Z';
+      var dvClip = el('clipPath', { id:'dvClip' });
+      el('path', { d:clipD, 'clip-rule':'evenodd', 'fill-rule':'evenodd' }, dvClip);
+      var dvGroup = el('g', { 'clip-path':'url(#dvClip)' });
+      // transparent grab/hit area (a bit wider than the pavement) for easy selection
+      el('path', { d:d, fill:'none', stroke:'rgba(255,255,255,0.001)', 'stroke-width':dwPx+18,
+        'stroke-linecap':'round', 'stroke-linejoin':'round', 'cursor':'move', 'pointer-events':'stroke' }, dvGroup);
+      // main pavement — asphalt gray
+      el('path', { d:d, fill:'none', stroke:'#4b4f57', 'stroke-width':dwPx,
+        'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-opacity':0.95,
+        'pointer-events':'none' }, dvGroup);
+      // subtle centerline
+      el('path', { d:d, fill:'none', stroke:'#2e333a', 'stroke-width':1,
+        'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'5 6',
+        'stroke-opacity':0.6, 'pointer-events':'none' }, dvGroup);
+      makeDrivewayDraggable(dvGroup, dwPx);
+      // handles at every point of the driveway — each is a draggable pivot
+      if(state.drivewayDone){
+        state.driveway.forEach(function(pt, i){
+          var h = el('circle', { cx:pt.x, cy:pt.y, r:9, fill:'#58a6ff', opacity:0.9,
+            stroke:'#0b0e14', 'stroke-width':2, 'cursor':'grab' });
+          makeDrivewayRotate(h, pt, i);
+        });
+      }
+    }
+
+    // ---- structures / items (place in yard, then freely draggable) ----
+    var houseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
+    var structSqft = 0;
+    activeItemBoxes = [];
+    itemOverlays = {};
+    // existing laid-out items form the "occupied" set, so new items avoid them
+    var placedBoxes = [];
+    ITEMS.forEach(function(it){
+      if((it.id in state.items) && state.items[it.id] !== null){
+        placedBoxes.push({ x:state.items[it.id].x, y:state.items[it.id].y,
+          w:it.w*scale, h:it.d*scale });
+      }
+    });
+    ITEMS.forEach(function(it){
+      if(!(it.id in state.items)) return;
+      var iw = it.w*scale, ih = it.d*scale;
+      var pos = state.items[it.id];
+      // auto-place the first time an item is added, avoiding all already-placed items
+      if(pos === null){
+        var slot = findSlot(lotBox, iw, ih, houseBox, placedBoxes);
+        if(!slot) return;   // no room — skip
+        state.items[it.id] = { x:slot.x, y:slot.y };
+        pos = state.items[it.id];
+        placedBoxes.push({ x:pos.x, y:pos.y, w:iw, h:ih });
+      } else {
+        // keep an existing item inside the (possibly resized) lot
+        pos.x = Math.max(lotBox.x, Math.min(pos.x, lotBox.x + lotBox.w - iw));
+        pos.y = Math.max(lotBox.y, Math.min(pos.y, lotBox.y + lotBox.h - ih));
+      }
+      structSqft += it.tree ? (it.w*it.w*Math.PI/4) : (it.w * it.d);
+      var r, labelEl = null, canopy = null;
+      if(it.tree){
+        // draw a translucent canopy + trunk, draggable as a unit
+        var r = el('g', { 'cursor':'move' });
+        r._bx = pos.x; r._by = pos.y;   // base top-left for translate math
+        var trunkH = Math.max(2, ih*0.18);
+        el('rect', { x:pos.x+iw/2-iw*0.06, y:pos.y+ih-trunkH, width:iw*0.12, height:trunkH,
+          fill:'#7a5636' }, r);
+        canopy = el('circle', { cx:pos.x+iw/2, cy:pos.y+ih*0.45, r:Math.max(3, iw*0.42),
+          fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.2,
+          cursor:'move' }, r);
+        labelEl = el('text', { x:pos.x+iw/2, y:pos.y+ih*0.45 - Math.max(3, iw*0.42) - 4,
+          'text-anchor':'middle', 'font-size':'9', fill:'#d7dbe4', 'font-weight':'600',
+          'pointer-events':'none' });
+        labelEl.textContent = it.name;
+      } else {
+        r = el('rect', { x:pos.x, y:pos.y, width:iw, height:ih,
+          fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.5,
+          'stroke-dasharray':'2 2', 'cursor':'move' });
+        var lbl = it.name + ' ' + it.w + '\u00d7' + it.d + '\u2032';
+        if(iw > 34 && ih > 22){
+          labelEl = el('text', { x:pos.x+iw/2, y:pos.y+ih/2+3.5, 'text-anchor':'middle',
+            'font-size':'9', fill:'#0b0e14', 'font-weight':'600', 'pointer-events':'none' });
+          labelEl.textContent = lbl;
+        } else {
+          labelEl = el('text', { x:pos.x+iw/2, y:Math.max(0, pos.y-5), 'text-anchor':'middle',
+            'font-size':'9', fill:'#d7dbe4', 'font-weight':'600', 'pointer-events':'none' });
+          labelEl.textContent = lbl;
+        }
+      }
+      // record for drag-over collision + red overlay
+      activeItemBoxes.push({ id:it.id, x:pos.x, y:pos.y, w:iw, h:ih });
+      itemOverlays[it.id] = el('rect', { x:pos.x, y:pos.y, width:iw, height:ih,
+        fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
+      if(it.tree){
+        makeTreeDraggable(r, it, iw, ih, lotBox, labelEl, canopy);
+      } else {
+        makeDraggable(r, it, iw, ih, lotBox, labelEl);
+      }
+    });
+
+    // stats
+    $id('shapeVal').textContent = shapeLabel(hWidth / hDepth);
+    $id('lotShapeVal').textContent = shapeLabel(W / D);
+    $id('statLotArea').textContent  = fmt(lotSqft) + ' sq ft';
+    $id('statLotAcres').textContent = fmtAcres(lotSqft/ACRE) + ' ac';
+    $id('statHouse').textContent    = fmt(hWidth*hDepth) + ' sq ft';
+    var pct = lotSqft ? (hWidth*hDepth)/lotSqft*100 : 0;
+    $id('statHousePct').textContent = pct.toFixed(1) + '%';
+    $id('statStructures').textContent = structSqft ? fmt(structSqft)+' sq ft' : '\u2014';
+    var yard = Math.max(0, lotSqft - hWidth*hDepth - structSqft);
+    $id('statYard').textContent      = fmt(yard) + ' sq ft';
+    $id('statYardAcres').textContent = fmtAcres(yard/ACRE) + ' ac';
+  }
+
+  // Find a free spot in the lot for a w×h (px) box, avoiding the house and prior items.
+  function findSlot(lotBox, w, h, houseBox, placedBoxes){
+    var margin = 6, gap = 6, step = 6;
+    for(var y = lotBox.y+margin; y + h <= lotBox.y+lotBox.h-margin; y += step){
+      for(var x = lotBox.x+margin; x + w <= lotBox.x+lotBox.w-margin; x += step){
+        var box = { x:x, y:y, w:w, h:h };
+        if(overlaps(box, houseBox, gap)) continue;
+        var clash = false;
+        for(var i=0;i<placedBoxes.length;i++){
+          if(overlaps(box, placedBoxes[i], gap)){ clash = true; break; }
+        }
+        if(!clash) return box;
+      }
+    }
+    return null;
+  }
+  function overlaps(a, b, gap){
+    return a.x < b.x+b.w+gap && a.x+a.w+gap > b.x && a.y < b.y+b.h+gap && a.y+a.h+gap > b.y;
+  }
+
+  // Snap the dragged box's boundaries flush against any target box edges that
+  // come within SNAP (px). Snaps each axis independently, picking the nearest
+  // matching edge (left/right/top/bottom alignment with each target).
+  function edgeSnap(x, y, w, h, targets){
+    var SNAP = 6, fx = x, fy = y;   // tight — only snap when very close to a boundary
+    var foundX = false, dx = 1e9;
+    for(var i=0;i<targets.length;i++){
+      var t = targets[i];
+      var xs = [t.x, t.x + t.w, t.x - w, t.x + t.w - w]; // our left/right to their left/right
+      for(var xi=0;xi<4;xi++){
+        var d = Math.abs(xs[xi] - x);
+        if(d <= SNAP && d < dx){ fx = xs[xi]; dx = d; foundX = true; }
+      }
+    }
+    var foundY = false, dy = 1e9;
+    for(var j=0;j<targets.length;j++){
+      var t2 = targets[j];
+      var ys = [t2.y, t2.y + h, t2.y + t2.h, t2.y + t2.h - h]; // our-top/bottom to their top/bottom
+      for(var yi=0;yi<4;yi++){
+        var d2 = Math.abs(ys[yi] - y);
+        if(d2 <= SNAP && d2 < dy){ fy = ys[yi]; dy = d2; foundY = true; }
+      }
+    }
+    return { x: foundX ? fx : x, y: foundY ? fy : y };
+  }
+
+  // Snap/overlap targets for a drag: the house plus every placed item except
+  // the one currently being dragged.
+  function dragTargets(exceptId){
+    var t = [];
+    if(activeHouseBox) t.push(activeHouseBox);
+    for(var i=0;i<activeItemBoxes.length;i++){
+      if(activeItemBoxes[i].id === exceptId) continue;
+      t.push(activeItemBoxes[i]);
+    }
+    return t;
+  }
+
+  // Prevent overlap entirely: if the dragged box intersects any target, push it
+  // out along the axis of least penetration so boundaries just touch. Repeats a
+  // few passes (with a tiny epsilon of slack) so items can't pass through.
+  function resolveOverlap(x, y, w, h, targets, lotBox){
+    var E = 0.001;
+    for(var pass=0; pass<12; pass++){
+      var moved = false;
+      for(var i=0;i<targets.length;i++){
+        var t = targets[i];
+        if(!overlaps({ x:x, y:y, w:w, h:h }, t, E)) continue;
+        // penetration on each axis
+        var penX = Math.min(x + w - t.x, t.x + t.w - x);
+        var penY = Math.min(y + h - t.y, t.y + t.h - y);
+        // push along the smaller (shallower) overlap so the item slides out
+        if(penX <= penY){
+          if(x + w - t.x <= t.x + t.w - x) x = t.x - w - E;   // exits on the left
+          else x = t.x + t.w + E;                              // exits on the right
+        } else {
+          if(y + h - t.y <= t.y + t.h - y) y = t.y - h - E;    // exits above
+          else y = t.y + t.h + E;                              // exits below
+        }
+        // keep inside the lot
+        x = Math.max(lotBox.x, Math.min(x, lotBox.x + lotBox.w - w));
+        y = Math.max(lotBox.y, Math.min(y, lotBox.y + lotBox.h - h));
+        moved = true;
+      }
+      if(!moved) break;
+    }
+    return { x:x, y:y };
+  }
+
+  // Drag a lot edge handle to resize the lot's width/depth. Converts the pixel
+  // delta to feet using the current scale, updates the explicit override dims,
+  // syncs the acreage readout, and records the change for undo.
+  function makeLotResize(rect, edge){
+    rect.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      beginChange();
+      var start = { x: svgPoint(ev).x, y: svgPoint(ev).y,
+                    W: state.lotW != null ? state.lotW : lotDims().w,
+                    D: state.lotD != null ? state.lotD : lotDims().d,
+                    pxPerFt: null };
+      // capture current px-per-ft before any resize
+      var dims = lotDims(), avail = SIZE - 2*PAD;
+      start.pxPerFt = Math.min(avail/dims.w, avail/dims.d);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(ev2){
+        var p = svgPoint(ev2);
+        var dFt = 0;
+        if(edge.key === 'W') dFt = (p.x - start.x) / start.pxPerFt;
+        else                 dFt = (p.y - start.y) / start.pxPerFt;
+        var MIN = 20, MAX = 1500;
+        var W = start.W, D = start.D;
+        if(edge.key === 'W') W = Math.max(MIN, Math.min(MAX, start.W + (edge.dir==='w' ? -dFt : dFt)));
+        else                 D = Math.max(MIN, Math.min(MAX, start.D + (edge.dir==='n' ? -dFt : dFt)));
+        state.lotW = W; state.lotD = D;
+        state.lotAcres = (W*D)/ACRE;
+        // sync the acreage input and clear preset highlight
+        var ai = $id('lotAcres'); if(ai) ai.value = state.lotAcres.toFixed(3);
+        document.querySelectorAll('#presets button').forEach(function(b){ b.classList.remove('on'); });
+        render();
+      }
+      function onUp(){
+        commitChange();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+    });
+    // clicking/handling shouldn't start driveway drawing
+    rect.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    rect.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
+  // Drag the house anywhere within the lot, clamped on all sides. Stores its
+  // position as a lot fraction so it stays put across resizes/re-renders.
+  function makeHouseDraggable(rect, labelEl, w, h, lotBox){
+    var start = null;
+    rect.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      state.lastInteract = { type:'house' };
+      beginChange();
+      var p = svgPoint(ev);
+      var cx = Number(rect.getAttribute('x')), cy = Number(rect.getAttribute('y'));
+      start = { dx: p.x - cx, dy: p.y - cy, ox: cx, oy: cy };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    function onMove(ev){
+      if(!start) return;
+      var p = svgPoint(ev);
+      var nx = p.x - start.dx, ny = p.y - start.dy;
+      // clamp inside the lot
+      nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - w));
+      ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - h));
+      // store as fraction of available travel
+      state.houseFx = (nx - lotBox.x) / Math.max(1, lotBox.w - w);
+      state.houseFy = (ny - lotBox.y) / Math.max(1, lotBox.h - h);
+      rect.setAttribute('x', nx);
+      rect.setAttribute('y', ny);
+      activeHouseBox.x = nx; activeHouseBox.y = ny;
+      if(houseOverlay){
+        houseOverlay.setAttribute('x', nx);
+        houseOverlay.setAttribute('y', ny);
+      }
+      if(labelEl){
+        labelEl.setAttribute('x', nx + w/2);
+        labelEl.setAttribute('y', ny + h/2 + 4);
+        labelEl.style.pointerEvents = 'none';
+      }
+    }
+    function onUp(){
+      if(start && (start.ox !== state.houseFx*lotBox.w+lotBox.x || start.oy !== state.houseFy*lotBox.h+lotBox.y)){
+        commitChange();
+        recordHistory({ action:'move', target:'house', x:state.houseFx, y:state.houseFy });
+      } else {
+        pendingSnap = null;
+        saveState();
+      }
+      start = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    // clicking the house shouldn't start driveway drawing
+    rect.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    rect.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
+  // Insert / move points on the driveway. A drag moves the whole path (clipped to
+  // the lot); a plain click inserts a new vertex on the nearest segment, which
+  // gains its own pivot handle.
+  function drivewayD(pts){
+    if(pts.length < 2) return '';
+    // 2 points -> straight line
+    if(pts.length === 2){
+      return 'M ' + pts[0].x + ' ' + pts[0].y + ' L ' + pts[1].x + ' ' + pts[1].y;
+    }
+    // 3+ points -> smooth Catmull-Rom curve through all of them
+    var d = 'M ' + pts[0].x.toFixed(2) + ' ' + pts[0].y.toFixed(2);
+    for(var i=0;i<pts.length-1;i++){
+      var p0 = pts[i-1] || pts[i];
+      var p1 = pts[i];
+      var p2 = pts[i+1];
+      var p3 = pts[i+2] || p2;
+      var c1x = p1.x + (p2.x - p0.x)/6;
+      var c1y = p1.y + (p2.y - p0.y)/6;
+      var c2x = p2.x - (p3.x - p1.x)/6;
+      var c2y = p2.y - (p3.y - p1.y)/6;
+      d += ' C ' + c1x.toFixed(2) + ' ' + c1y.toFixed(2) +
+           ', ' + c2x.toFixed(2) + ' ' + c2y.toFixed(2) +
+           ', ' + p2.x.toFixed(2) + ' ' + p2.y.toFixed(2);
+    }
+    return d;
+  }
+
+function makeDrivewayDraggable(group, dwPx){
+    group.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      state.lastInteract = { type:'driveway' };
+      beginChange();
+      var p = svgPoint(ev);
+      var start = { x:p.x, y:p.y, pts: state.driveway.map(function(pt){return {x:pt.x,y:pt.y};}) };
+      var dragged = false;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(e){
+        var q = svgPoint(e);
+        if(Math.abs(q.x-p.x)>3 || Math.abs(q.y-p.y)>3) dragged = true;
+        var dx = q.x - start.x, dy = q.y - start.y;
+        var moved = start.pts.map(function(pt){ return { x:pt.x+dx, y:pt.y+dy }; });
+        state.driveway = moved;
+        var lotD = lotDims();
+        var s = Math.min((SIZE-2*PAD)/lotD.w, (SIZE-2*PAD)/lotD.d);
+        var lx0 = (SIZE - lotD.w*s)/2, ly0 = (SIZE - lotD.d*s)/2;
+        var lb = { x:lx0, y:ly0, w:lotD.w*s, h:lotD.d*s };
+        state.driveway[0].x = Math.max(lb.x, Math.min(state.driveway[0].x, lb.x + lb.w));
+        state.driveway[0].y = Math.max(lb.y, Math.min(state.driveway[0].y, lb.y + lb.h));
+        render();
+      }
+      function onUp(e){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        // click without dragging = insert a new vertex on the nearest segment
+        if(!dragged){
+          var q = (e && e.clientX != null) ? svgPoint(e) : p;
+          insertDrivewayPoint(p);
+          render();
+        } else {
+          recordHistory({ action:'move', target:'driveway', count: state.driveway.length });
+        }
+        commitChange();   // driveway drag / insert recorded for undo
+      }
+    });
+    // don't bubble to the svg click-to-draw handler
+    group.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    group.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
+  // Insert a new point into the driveway, splitting the segment it falls on
+  // (finds the closest segment and inserts the point between its two endpoints).
+  function insertDrivewayPoint(pt){
+    if(!pt || !isFinite(pt.x) || !isFinite(pt.y)) return;
+    var best = -1, bestD = 1e9;
+    for(var i=0;i<state.driveway.length-1;i++){
+      var a = state.driveway[i], b = state.driveway[i+1];
+      var d = distToSegment(pt, a, b);
+      if(d < bestD){ bestD = d; best = i; }
+    }
+    if(best === -1) return;
+    state.driveway.splice(best+1, 0, { x:pt.x, y:pt.y });
+    state.drivewayDone = true;
+    state.lastInteract = { type:'driveway' };
+    recordHistory({ action:'move', target:'driveway', count: state.driveway.length, x:pt.x, y:pt.y });
+    if($id('drivewayCount')) $id('drivewayCount').textContent = state.driveway.length + ' pts';
+  }
+  function distToSegment(p, a, b){
+    var dx = b.x-a.x, dy = b.y-a.y;
+    var len2 = dx*dx + dy*dy;
+    var t = len2 ? ((p.x-a.x)*dx + (p.y-a.y)*dy)/len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    var px2 = a.x + t*dx, py2 = a.y + t*dy;
+    return Math.hypot(p.x-px2, p.y-py2);
+  }
+
+  // Drag a single driveway point (pivot) with the mouse; the other points stay put.
+  function makeDrivewayRotate(circle, anchorPt, handleIdx){
+    circle.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      state.lastInteract = { type:'driveway' };
+      beginChange();
+      var off = svgPoint(ev);
+      var actualIdx = handleIdx;   // move the exact point this handle belongs to
+      var startX = state.driveway[actualIdx].x, startY = state.driveway[actualIdx].y;
+      var start = { dx: off.x - startX, dy: off.y - startY };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(e){
+        var q = svgPoint(e);
+        if(!isFinite(q.x) || !isFinite(q.y)) return;
+        var nx = q.x - start.dx, ny = q.y - start.dy;
+        if(!isFinite(nx) || !isFinite(ny)) return;
+        // move only the endpoint being dragged; keep the other end fixed
+        var lotD = lotDims();
+        var s = Math.min((SIZE-2*PAD)/lotD.w, (SIZE-2*PAD)/lotD.d);
+        var lx0 = (SIZE - lotD.w*s)/2, ly0 = (SIZE - lotD.d*s)/2;
+        nx = Math.max(lx0, Math.min(nx, lx0 + lotD.w*s));
+        ny = Math.max(ly0, Math.min(ny, ly0 + lotD.d*s));
+        state.driveway[actualIdx].x = nx;
+        state.driveway[actualIdx].y = ny;
+        render();
+      }
+      function onUp(){
+        recordHistory({ action:'move', target:'driveway', count: state.driveway.length });
+        commitChange();   // driveway point move recorded for undo
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+    });
+    // clicking a handle shouldn't add a driveway point or drag the path
+    circle.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    circle.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
+  // Map a client/mouse position into SVG viewBox coordinates.
+  function svgPoint(ev){
+    var rect = svg.getBoundingClientRect();
+    return {
+      x: (ev.clientX - rect.left) * (SIZE / rect.width),
+      y: (ev.clientY - rect.top) * (SIZE / rect.height)
+    };
+  }
+
+  // Drag a tree group (translates it, since a <g> has no x/y). Same clamp, snap
+  // and overlap logic as makeDraggable.
+  function makeTreeDraggable(group, it, iw, ih, lotBox, labelEl, canopy){
+    var start = null;
+    group.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      state.lastInteract = { type:'item', id:it.id };
+      beginChange();
+      var p = svgPoint(ev);
+      start = { dx: p.x - group._bx, dy: p.y - group._by, ox: state.items[it.id].x, oy: state.items[it.id].y };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    function apply(nx, ny){
+      group.setAttribute('transform', 'translate(' + (nx - group._bx) + ' ' + (ny - group._by) + ')');
+      if(labelEl){
+        labelEl.setAttribute('x', nx + iw/2);
+        labelEl.setAttribute('y', Math.max(0, ny + ih*0.45 - Math.max(3, iw*0.42) - 4));
+      }
+    }
+    function onMove(ev){
+      if(!start) return;
+      var p = svgPoint(ev);
+      var nx = p.x - start.dx, ny = p.y - start.dy;
+      nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
+      ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+      if(state.snapOn){
+        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(it.id));
+        nx = sn.x; ny = sn.y;
+        nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
+        ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
+        nx = no.x; ny = no.y;
+      }
+      state.items[it.id].x = nx;
+      state.items[it.id].y = ny;
+      apply(nx, ny);
+      var over = overlaps({ x:nx, y:ny, w:iw, h:ih }, activeHouseBox, 0);
+      if(houseOverlay) houseOverlay.setAttribute('fill-opacity', over ? 0.45 : 0);
+      for(var k=0;k<activeItemBoxes.length;k++){
+        var ob = activeItemBoxes[k];
+        if(ob.id === it.id) continue;
+        var isOver = overlaps({ x:nx, y:ny, w:iw, h:ih }, ob, 0);
+        if(itemOverlays[ob.id]) itemOverlays[ob.id].setAttribute('fill-opacity', isOver ? 0.45 : 0);
+      }
+    }
+    function onUp(){
+      if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
+         state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
+        commitChange();
+        recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+      } else {
+        pendingSnap = null;
+        saveState();
+      }
+      start = null;
+      if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
+      for(var k=0;k<activeItemBoxes.length;k++){
+        if(itemOverlays[activeItemBoxes[k].id]) itemOverlays[activeItemBoxes[k].id].setAttribute('fill-opacity', 0);
+      }
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    // clicking/merely touching a tree shouldn't start driveway drawing
+    group.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    group.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
+  // Drag an item rect anywhere within the lot bounds, clamped on all sides.
+  function makeDraggable(rect, it, iw, ih, lotBox, labelEl){
+    var start = null;
+    rect.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      state.lastInteract = { type:'item', id:it.id };
+      beginChange();
+      var p = svgPoint(ev);
+      start = {
+        dx: p.x - state.items[it.id].x,
+        dy: p.y - state.items[it.id].y,
+        ox: state.items[it.id].x, oy: state.items[it.id].y
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    function onMove(ev){
+      if(!start) return;
+      var p = svgPoint(ev);
+      var nx = p.x - start.dx, ny = p.y - start.dy;
+      // clamp inside lot bounds
+      nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
+      ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+      if(state.snapOn){
+        // snap boundaries flush to the house and other items
+        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(it.id));
+        nx = sn.x; ny = sn.y;
+        nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
+        ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+        // never overlap: only outside boundaries may touch outside boundaries.
+        // push the dragged item out to exact contact with the house/other items.
+        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
+        nx = no.x; ny = no.y;
+      }
+      state.items[it.id].x = nx;
+      state.items[it.id].y = ny;
+      rect.setAttribute('x', nx);
+      rect.setAttribute('y', ny);
+      // keep the label with the moving item (inside if it fits, above otherwise)
+      if(labelEl){
+        labelEl.setAttribute('x', nx + iw/2);
+        labelEl.setAttribute('y', (iw > 34 && ih > 22) ? ny + ih/2 + 3.5 : Math.max(0, ny - 5));
+      }
+      // show red overlay when the dragged item overlaps the house
+      var over = overlaps({ x:nx, y:ny, w:iw, h:ih }, activeHouseBox, 0);
+      if(houseOverlay) houseOverlay.setAttribute('fill-opacity', over ? 0.45 : 0);
+      // ...or overlaps another item
+      for(var k=0;k<activeItemBoxes.length;k++){
+        var ob = activeItemBoxes[k];
+        if(ob.id === it.id) continue;           // skip the item being dragged
+        var isOver = overlaps({ x:nx, y:ny, w:iw, h:ih }, ob, 0);
+        if(itemOverlays[ob.id]) itemOverlays[ob.id].setAttribute('fill-opacity', isOver ? 0.45 : 0);
+      }
+    }
+    function onUp(){
+      if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
+         state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
+        recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+        commitChange();
+      } else {
+        pendingSnap = null;
+        saveState();
+      }
+      start = null;
+      if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
+      for(var k=0;k<activeItemBoxes.length;k++){
+        if(itemOverlays[activeItemBoxes[k].id]) itemOverlays[activeItemBoxes[k].id].setAttribute('fill-opacity', 0);
+      }
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    // clicking/dragging an item shouldn't start driveway drawing
+    rect.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    rect.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
+  function init(){
+    // restore previously-saved items / driveway / history from localStorage
+    loadState();
+    // house shape resets to square on load
+    state.shape = 0;
+    $id('shape').value = '0';
+    $id('shapeVal').textContent = '1 : 1';
+    // lot shape resets to square on load
+    state.lotShape = 0;
+    $id('lotShape').value = '0';
+    $id('lotShapeVal').textContent = '1 : 1';
+
+    // lot acreage input
+    $id('lotAcres').addEventListener('input', function(){
+      var v = parseFloat(this.value);
+      if(!isNaN(v) && v > 0){ state.lotAcres = v; state.lotW = state.lotD = null; render(); }
+    });
+
+    // shape slider: 0=middle, negative=wider, positive=taller
+    $id('shape').addEventListener('input', function(){
+      state.shape = parseFloat(this.value);
+      render();
+    });
+
+    // lot shape slider: 0=middle (square), negative=wider, positive=taller
+    $id('lotShape').addEventListener('input', function(){
+      state.lotShape = parseFloat(this.value);
+      render();
+    });
+
+    // acreage quick sizes
+    document.querySelectorAll('#presets button').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        state.lotAcres = parseFloat(btn.dataset.a);
+        state.lotW = state.lotD = null;
+        $id('lotAcres').value = state.lotAcres;
+        document.querySelectorAll('#presets button').forEach(function(b){ b.classList.remove('on'); });
+        btn.classList.add('on');
+        render();
+      });
+    });
+
+    // house sqft
+    $id('houseSqft').addEventListener('input', function(){
+      state.houseSqft = parseInt(this.value, 10);
+      $id('houseSqftVal').textContent = fmt(state.houseSqft);
+      render();
+    });
+
+    // build item toggles
+    var itemsWrap = $id('items');
+    var curCat = null;
+    ITEMS.forEach(function(it){
+      if(it.cat !== curCat){
+        curCat = it.cat;
+        var head = document.createElement('div');
+        head.className = 'item-cat';
+        head.textContent = curCat;
+        itemsWrap.appendChild(head);
+      }
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.id = it.id;
+      btn.textContent = it.name;
+      btn.title = it.w + '\u00d7' + it.d + '\u2032';
+      if(it.id in state.items) btn.classList.add('on');   // restore loaded state
+      btn.addEventListener('click', function(){
+      beginChange();
+      if(it.id in state.items){
+        // deleting via the toggle
+        var was = state.items[it.id];
+        delete state.items[it.id];
+        btn.classList.remove('on');
+        commitChange();
+        recordHistory({ action:'remove', target:'item', id:it.id, x: was ? was.x : null, y: was ? was.y : null });
+        state.lastInteract = null;
+        render();
+      } else {
+        // adding via the toggle (auto-placed on next render)
+        state.items[it.id] = null;
+        btn.classList.add('on');
+        state.lastInteract = { type:'item', id:it.id };
+        render();
+        commitChange();
+        var placed = state.items[it.id];
+        recordHistory({ action:'add', target:'item', id:it.id, x: placed ? placed.x : null, y: placed ? placed.y : null });
+      }
+    });
+      itemsWrap.appendChild(btn);
+    });
+
+    // snap placement toggle (resets to OFF — its default — after reload)
+    state.snapOn = false;
+    $id('snaptog').checked = false;
+    $id('snaptog').addEventListener('change', function(){
+      state.snapOn = this.checked;
+    });
+
+    // ---- driveway: first click = start, second click = end (straight segment) ----
+    function insideBox(pt, b){
+      return b && pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h;
+    }
+    svg.addEventListener('click', function(ev){
+      if(state.drivewayDone) return;
+      var p = svgPoint(ev);
+      var dims = lotDims();
+      var lotS = Math.min((SIZE-2*PAD)/dims.w, (SIZE-2*PAD)/dims.d);
+      var lx = (SIZE - dims.w*lotS)/2, ly = (SIZE - dims.d*lotS)/2;
+      var L = { x:lx, y:ly, w:dims.w*lotS, h:dims.d*lotS };
+      if(!insideBox(p, L)) return;
+      if(insideBox(p, activeHouseBox)) return;
+      for(var k=0;k<activeItemBoxes.length;k++){
+        if(insideBox(p, activeItemBoxes[k])) return;
+      }
+      if(state.driveway.length === 0) beginChange();   // snapshot before drawing starts
+      state.driveway.push({ x:p.x, y:p.y });
+      state.lastInteract = { type:'driveway' };
+      if(state.driveway.length === 1){
+        // first click sets the start
+        syncDrivewayUI();
+        render();
+      } else {
+        // second click sets the end and completes the driveway
+        state.driveway = [state.driveway[0], state.driveway[state.driveway.length-1]];
+        state.drivewayDone = true;
+        syncDrivewayUI();
+        render();
+        commitChange();
+        recordHistory({ action:'add', target:'driveway', x:state.driveway[0].x, y:state.driveway[0].y });
+      }
+    });
+
+    // ---- Backspace deletes the last item / house / driveway the user touched ----
+    document.addEventListener('keydown', function(ev){
+      if(ev.key !== 'Backspace' && ev.key !== 'Delete') return;
+      // don't hijack typing in inputs
+      var tg = ev.target;
+      if(tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
+      var li = state.lastInteract;
+      if(!li) return;
+      ev.preventDefault();
+      beginChange();
+      if(li.type === 'item' && li.id in state.items){
+        var was = state.items[li.id];
+        delete state.items[li.id];
+        var btn = document.querySelector('#items button[data-id="' + li.id + '"]');
+        if(btn) btn.classList.remove('on');
+        state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'item', id:li.id, x: was?was.x:null, y: was?was.y:null });
+        render();
+      } else if(li.type === 'house'){
+        // reset house to default (centered)
+        state.houseFx = null; state.houseFy = null;
+        state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'house', x:state.houseFx, y:state.houseFy });
+        render();
+      } else if(li.type === 'driveway'){
+        var cp = state.driveway.map(function(p){ return {x:p.x, y:p.y}; });
+        state.driveway = [];
+        state.drivewayDone = false;
+        syncDrivewayUI();
+        state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'driveway', x: cp[0]?cp[0].x:null, y: cp[0]?cp[0].y:null, count: cp.length });
+        render();
+      }
+    });
+
+    window.addEventListener('resize', render);
+
+    // ---- undo / redo buttons + keyboard shortcuts ----
+    $id('undoBtn').addEventListener('click', undo);
+    $id('redoBtn').addEventListener('click', redo);
+    document.addEventListener('keydown', function(ev){
+      var mod = ev.ctrlKey || ev.metaKey;
+      if(mod && (ev.key === 'z' || ev.key === 'Z')){
+        if(ev.shiftKey) redo(); else undo();
+        ev.preventDefault();
+      } else if(mod && (ev.key === 'y' || ev.key === 'Y')){
+        redo();
+        ev.preventDefault();
+      }
+    });
+
+    syncUndoRedo();
+    render();
+  }
+
+  init();
+})();
