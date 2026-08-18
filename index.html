@@ -449,9 +449,20 @@
       var dwPx = dwFt * scale;
       // smooth the path into a curve whenever there are 3+ points
       var d = drivewayD(state.driveway);
-      // clip the driveway to the lot boundary so it is cut off at the edge
+      // clip the driveway to the lot boundary AND cut it off at the house edge.
+      // One path: lot rect (outer) + house rect (inverse winding) with evenodd
+      // so the driveway is hidden under the house and beyond the lot.
+      var clipD =
+        'M ' + lotBox.x + ' ' + lotBox.y +
+        ' H ' + (lotBox.x + lotBox.w) +
+        ' V ' + (lotBox.y + lotBox.h) +
+        ' H ' + lotBox.x + ' Z ' +
+        'M ' + hx + ' ' + hy +
+        ' H ' + (hx + hw_px) +
+        ' V ' + (hy + hd_px) +
+        ' H ' + hx + ' Z';
       var dvClip = el('clipPath', { id:'dvClip' });
-      el('rect', { x:lotBox.x, y:lotBox.y, width:lotBox.w, height:lotBox.h }, dvClip);
+      el('path', { d:clipD, 'clip-rule':'evenodd', 'fill-rule':'evenodd' }, dvClip);
       var dvGroup = el('g', { 'clip-path':'url(#dvClip)' });
       // transparent grab/hit area (a bit wider than the pavement) for easy selection
       el('path', { d:d, fill:'none', stroke:'rgba(255,255,255,0.001)', 'stroke-width':dwPx+18,
