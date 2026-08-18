@@ -330,6 +330,15 @@
         'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'5 6',
         'stroke-opacity':0.6, 'pointer-events':'none' }, dvGroup);
       makeDrivewayDraggable(dvGroup, dwPx);
+      // rotation handles at each end of the driveway (once drawn)
+      if(state.drivewayDone){
+        var endPts = [state.driveway[0], state.driveway[state.driveway.length-1]];
+        endPts.forEach(function(pt, idx){
+          var h = el('circle', { cx:pt.x, cy:pt.y, r:9, fill:'#58a6ff', opacity:0.9,
+            stroke:'#0b0e14', 'stroke-width':2, 'cursor':'grab' });
+          makeDrivewayRotate(h, pt, idx);
+        });
+      }
     }
 
     // ---- structures / items (place in yard, then freely draggable) ----
@@ -564,6 +573,42 @@
     group.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
   }
 
+  // Rotate the whole driveway around a chosen endpoint. Dragging the handle arcs
+  // the path by the swept angle; the held endpoint stays fixed.
+  function makeDrivewayRotate(circle, anchorPt, handleIdx){
+    circle.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      var p = svgPoint(ev);
+      // Grab point is the pivot (handle sits on the endpoint); rotating simply
+      // swings all points so the branch follows the pointer angle about the anchor.
+      var startPtr = Math.atan2(p.y - anchorPt.y, p.x - anchorPt.x);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(e){
+        var q = svgPoint(e);
+        var ptr = Math.atan2(q.y - anchorPt.y, q.x - anchorPt.x);
+        // delta relative to pointer: preserve the offset between grab-point and neighbor
+        var delta = (ptr - startPtr);
+        // rotate all points around the held end
+        state.driveway = state.driveway.map(function(pt){
+          var dx = pt.x - anchorPt.x, dy = pt.y - anchorPt.y;
+          var cos = Math.cos(delta), sin = Math.sin(delta);
+          return { x: anchorPt.x + dx*cos - dy*sin,
+                   y: anchorPt.y + dx*sin + dy*cos };
+        });
+        render();
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+    });
+    // clicking a handle shouldn't add a driveway point or drag the path
+    circle.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    circle.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
   // Map a client/mouse position into SVG viewBox coordinates.
   function svgPoint(ev){
     var rect = svg.getBoundingClientRect();
@@ -731,6 +776,7 @@
     svg.addEventListener('dblclick', function(ev){
       clearTimeout(dwPointTimer);   // cancel the pending single-click point
       state.drivewayDone = true;
+      render();                     // show the rotation handles
     });
 
     // clear driveway (also lets the user start a fresh one)
