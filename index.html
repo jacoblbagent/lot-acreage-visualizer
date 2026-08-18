@@ -128,8 +128,8 @@
       <div class="presets" id="items"></div>
       <div class="items-hint">average sizes · toggled items are placed in the yard</div>
       <div class="snap-row">
-        <span>Snap placement (5&nbsp;ft grid)</span>
-        <label class="switch"><input type="checkbox" id="snaptog" checked><span class="knob"></span></label>
+        <span>Snap placement</span>
+        <label class="switch"><input type="checkbox" id="snaptog" checked autocomplete="off"><span class="knob"></span></label>
       </div>
     </div>
 
@@ -547,7 +547,9 @@
       itemsWrap.appendChild(btn);
     });
 
-    // snap placement toggle
+    // snap placement toggle (always reset to ON after reload)
+    state.snapOn = true;
+    $id('snaptog').checked = true;
     $id('snaptog').addEventListener('change', function(){
       state.snapOn = this.checked;
     });
