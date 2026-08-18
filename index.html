@@ -173,7 +173,45 @@
 (function(){
   var ACRE = 43560, PAD = 52, SIZE = 620;
   var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:true,
-               houseFx:null, houseFy:null, driveway:[], drivewayDone:false };
+               houseFx:null, houseFy:null, driveway:[], drivewayDone:false,
+               lastInteract:null, history:[] };
+  var LS_KEY = 'lotAcreageViz';
+  var HISTORY_CAP = 200;
+
+  // ---- persistence: history of added/deleted/moved items, kept in localStorage ----
+  function saveState(){
+    try{
+      var snap = {
+        items: state.items,
+        driveway: state.driveway,
+        drivewayDone: state.drivewayDone,
+        houseFx: state.houseFx, houseFy: state.houseFy,
+        history: state.history.slice(-HISTORY_CAP)
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(snap));
+    }catch(e){ /* storage unavailable — ignore */ }
+  }
+  function loadState(){
+    try{
+      var raw = localStorage.getItem(LS_KEY);
+      if(!raw) return;
+      var s = JSON.parse(raw);
+      if(s && typeof s === 'object'){
+        if(s.items) state.items = s.items;
+        if(Array.isArray(s.driveway)) state.driveway = s.driveway;
+        if(typeof s.drivewayDone === 'boolean') state.drivewayDone = s.drivewayDone;
+        if(s.houseFx !== undefined) state.houseFx = s.houseFx;
+        if(s.houseFy !== undefined) state.houseFy = s.houseFy;
+        if(Array.isArray(s.history)) state.history = s.history.slice(-HISTORY_CAP);
+      }
+    }catch(e){ /* ignore corrupt */ }
+  }
+  function recordHistory(entry){
+    entry.t = Date.now();
+    state.history.push(entry);
+    if(state.history.length > HISTORY_CAP) state.history = state.history.slice(-HISTORY_CAP);
+    saveState();
+  }
 
   // Everyday structures with realistic average footprint sizes (width × depth, ft)
   var ITEMS = [
@@ -523,9 +561,10 @@
     var start = null;
     rect.addEventListener('mousedown', function(ev){
       ev.preventDefault();
+      state.lastInteract = { type:'house' };
       var p = svgPoint(ev);
       var cx = Number(rect.getAttribute('x')), cy = Number(rect.getAttribute('y'));
-      start = { dx: p.x - cx, dy: p.y - cy };
+      start = { dx: p.x - cx, dy: p.y - cy, ox: cx, oy: cy };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
@@ -553,6 +592,11 @@
       }
     }
     function onUp(){
+      if(start && (start.ox !== state.houseFx*lotBox.w+lotBox.x || start.oy !== state.houseFy*lotBox.h+lotBox.y)){
+        recordHistory({ action:'move', target:'house', x:state.houseFx, y:state.houseFy });
+      } else {
+        saveState();
+      }
       start = null;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -593,6 +637,7 @@ function makeDrivewayDraggable(group, dwPx){
     group.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       ev.stopPropagation();
+      state.lastInteract = { type:'driveway' };
       var p = svgPoint(ev);
       var start = { x:p.x, y:p.y, pts: state.driveway.map(function(pt){return {x:pt.x,y:pt.y};}) };
       var dragged = false;
@@ -620,6 +665,8 @@ function makeDrivewayDraggable(group, dwPx){
           var q = (e && e.clientX != null) ? svgPoint(e) : p;
           insertDrivewayPoint(p);
           render();
+        } else {
+          recordHistory({ action:'move', target:'driveway', count: state.driveway.length });
         }
       }
     });
@@ -641,6 +688,8 @@ function makeDrivewayDraggable(group, dwPx){
     if(best === -1) return;
     state.driveway.splice(best+1, 0, { x:pt.x, y:pt.y });
     state.drivewayDone = true;
+    state.lastInteract = { type:'driveway' };
+    recordHistory({ action:'move', target:'driveway', count: state.driveway.length, x:pt.x, y:pt.y });
     if($id('drivewayCount')) $id('drivewayCount').textContent = state.driveway.length + ' pts';
   }
   function distToSegment(p, a, b){
@@ -657,6 +706,7 @@ function makeDrivewayDraggable(group, dwPx){
     circle.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       ev.stopPropagation();
+      state.lastInteract = { type:'driveway' };
       var off = svgPoint(ev);
       var actualIdx = handleIdx;   // move the exact point this handle belongs to
       var startX = state.driveway[actualIdx].x, startY = state.driveway[actualIdx].y;
@@ -679,6 +729,7 @@ function makeDrivewayDraggable(group, dwPx){
         render();
       }
       function onUp(){
+        recordHistory({ action:'move', target:'driveway', count: state.driveway.length });
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
@@ -703,8 +754,9 @@ function makeDrivewayDraggable(group, dwPx){
     var start = null;
     group.addEventListener('mousedown', function(ev){
       ev.preventDefault();
+      state.lastInteract = { type:'item', id:it.id };
       var p = svgPoint(ev);
-      start = { dx: p.x - group._bx, dy: p.y - group._by };
+      start = { dx: p.x - group._bx, dy: p.y - group._by, ox: state.items[it.id].x, oy: state.items[it.id].y };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
@@ -742,6 +794,12 @@ function makeDrivewayDraggable(group, dwPx){
       }
     }
     function onUp(){
+      if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
+         state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
+        recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+      } else {
+        saveState();
+      }
       start = null;
       if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
       for(var k=0;k<activeItemBoxes.length;k++){
@@ -760,10 +818,12 @@ function makeDrivewayDraggable(group, dwPx){
     var start = null;
     rect.addEventListener('mousedown', function(ev){
       ev.preventDefault();
+      state.lastInteract = { type:'item', id:it.id };
       var p = svgPoint(ev);
       start = {
         dx: p.x - state.items[it.id].x,
-        dy: p.y - state.items[it.id].y
+        dy: p.y - state.items[it.id].y,
+        ox: state.items[it.id].x, oy: state.items[it.id].y
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
@@ -807,6 +867,12 @@ function makeDrivewayDraggable(group, dwPx){
       }
     }
     function onUp(){
+      if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
+         state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
+        recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+      } else {
+        saveState();
+      }
       start = null;
       if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
       for(var k=0;k<activeItemBoxes.length;k++){
@@ -821,6 +887,8 @@ function makeDrivewayDraggable(group, dwPx){
   }
 
   function init(){
+    // restore previously-saved items / driveway / history from localStorage
+    loadState();
     // house shape resets to square on load
     state.shape = 0;
     $id('shape').value = '0';
@@ -874,9 +942,24 @@ function makeDrivewayDraggable(group, dwPx){
       btn.dataset.id = it.id;
       btn.textContent = it.name;
       btn.title = it.w + '\u00d7' + it.d + '\u2032';
+      if(it.id in state.items) btn.classList.add('on');   // restore loaded state
       btn.addEventListener('click', function(){
-        if(it.id in state.items){ delete state.items[it.id]; btn.classList.remove('on'); }
-        else { state.items[it.id] = null; btn.classList.add('on'); }
+        if(it.id in state.items){
+          // deleting via the toggle
+          var was = state.items[it.id];
+          delete state.items[it.id];
+          btn.classList.remove('on');
+          recordHistory({ action:'remove', target:'item', id:it.id, x: was ? was.x : null, y: was ? was.y : null });
+          state.lastInteract = null;
+        } else {
+          state.items[it.id] = null;
+          btn.classList.add('on');
+          state.lastInteract = { type:'item', id:it.id };
+          render();
+          var placed = state.items[it.id];
+          recordHistory({ action:'add', target:'item', id:it.id, x: placed ? placed.x : null, y: placed ? placed.y : null });
+          return; // render already called
+        }
         render();
       });
       itemsWrap.appendChild(btn);
@@ -906,6 +989,7 @@ function makeDrivewayDraggable(group, dwPx){
         if(insideBox(p, activeItemBoxes[k])) return;
       }
       state.driveway.push({ x:p.x, y:p.y });
+      state.lastInteract = { type:'driveway' };
       if(state.driveway.length === 1){
         // first click sets the start
         $id('drivewayCount').textContent = 'set end point';
@@ -916,15 +1000,57 @@ function makeDrivewayDraggable(group, dwPx){
         state.drivewayDone = true;
         $id('drivewayCount').textContent = '2 pts';
         render();
+        recordHistory({ action:'add', target:'driveway', x:state.driveway[0].x, y:state.driveway[0].y });
       }
     });
 
     // clear driveway (also lets the user start a fresh one)
     $id('drivewayClear').addEventListener('click', function(){
+      if(state.driveway.length){
+        var pts = state.driveway.map(function(p){ return {x:p.x, y:p.y}; });
+        recordHistory({ action:'remove', target:'driveway', x: pts[0]?pts[0].x:null, y: pts[0]?pts[0].y:null, count: state.driveway.length });
+      } else {
+        saveState();
+      }
       state.driveway = [];
       state.drivewayDone = false;
       $id('drivewayCount').textContent = '0 pts';
+      state.lastInteract = null;
       render();
+    });
+
+    // ---- Backspace deletes the last item / house / driveway the user touched ----
+    document.addEventListener('keydown', function(ev){
+      if(ev.key !== 'Backspace' && ev.key !== 'Delete') return;
+      // don't hijack typing in inputs
+      var tg = ev.target;
+      if(tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
+      var li = state.lastInteract;
+      if(!li) return;
+      ev.preventDefault();
+      if(li.type === 'item' && li.id in state.items){
+        var was = state.items[li.id];
+        delete state.items[li.id];
+        var btn = document.querySelector('#items button[data-id="' + li.id + '"]');
+        if(btn) btn.classList.remove('on');
+        recordHistory({ action:'remove', target:'item', id:li.id, x: was?was.x:null, y: was?was.y:null });
+        state.lastInteract = null;
+        render();
+      } else if(li.type === 'house'){
+        // reset house to default (centered)
+        recordHistory({ action:'remove', target:'house', x:state.houseFx, y:state.houseFy });
+        state.houseFx = null; state.houseFy = null;
+        state.lastInteract = null;
+        render();
+      } else if(li.type === 'driveway'){
+        var cp = state.driveway.map(function(p){ return {x:p.x, y:p.y}; });
+        recordHistory({ action:'remove', target:'driveway', x: cp[0]?cp[0].x:null, y: cp[0]?cp[0].y:null, count: state.driveway.length });
+        state.driveway = [];
+        state.drivewayDone = false;
+        $id('drivewayCount').textContent = '0 pts';
+        state.lastInteract = null;
+        render();
+      }
     });
 
     window.addEventListener('resize', render);
