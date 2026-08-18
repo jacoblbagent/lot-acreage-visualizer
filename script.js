@@ -272,17 +272,18 @@
       height:Math.max(0,D*scale-2*inset), fill:'none', stroke:'#2b3a52',
       'stroke-width':1, 'stroke-dasharray':'4 4' });
 
-    // resize handles on the lot edges (drag to change width/height)
-    var hw = 10, hd = 10, hc = '#82aaff';
-    var edges = [
-      { x:lx+W*scale/2-hw/2, y:ly-hd/2,        w:hw, h:hd, dir:'n', key:'D', sign:-1 },
-      { x:lx+W*scale/2-hw/2, y:ly+D*scale-hd/2, w:hw, h:hd, dir:'s', key:'D', sign:1 },
-      { x:lx-hw/2,           y:ly+D*scale/2-hd/2, w:hw, h:hd, dir:'w', key:'W', sign:-1 },
-      { x:lx+W*scale-hw/2,   y:ly+D*scale/2-hd/2, w:hw, h:hd, dir:'e', key:'W', sign:1 }
+    // resize drag strips along the lot's boundary lines — grab anywhere on an edge
+    // to resize that dimension. Thin but full-length so the whole line is grabbable.
+    var ht = 8;   // hit thickness (in/out of the boundary)
+    var strip = [
+      { x:lx,        y:ly-ht/2,          w:W*scale,      h:ht, dir:'n', key:'D', sign:-1 }, // top
+      { x:lx,        y:ly+D*scale-ht/2,  w:W*scale,      h:ht, dir:'s', key:'D', sign:1  }, // bottom
+      { x:lx-ht/2,   y:ly,               w:ht,           h:D*scale, dir:'w', key:'W', sign:-1 }, // left
+      { x:lx+W*scale-ht/2, y:ly,         w:ht,           h:D*scale, dir:'e', key:'W', sign:1  }  // right
     ];
-    edges.forEach(function(e){
-      var r = el('rect', { x:e.x, y:e.y, width:e.w, height:e.h, fill:hc,
-        stroke:'#0b0e14', 'stroke-width':1, cursor:(e.dir==='n'||e.dir==='s')?'ns-resize':'ew-resize' });
+    strip.forEach(function(e){
+      var r = el('rect', { x:e.x, y:e.y, width:e.w, height:e.h, fill:'transparent',
+        cursor:(e.dir==='n'||e.dir==='s')?'ns-resize':'ew-resize' });
       makeLotResize(r, e);
     });
 
