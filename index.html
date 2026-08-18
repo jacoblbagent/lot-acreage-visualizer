@@ -65,7 +65,6 @@
   }
   .presets button:hover,.presets button.on{border-color:var(--accent);color:var(--accent)}
   .items-hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;margin-bottom:0}
-  .driveway-actions{display:flex;align-items:center;gap:10px;margin-top:10px}
   .driveway-btn{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
   .driveway-btn:hover{border-color:var(--accent);color:var(--accent)}
   .driveway-count{font-size:11px;color:var(--muted)}
@@ -90,6 +89,14 @@
     padding:12px 14px;pointer-events:none;
   }
   .stats-title{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:6px;font-weight:600}
+  /* floating driveway controls, top-right of the chart */
+  .driveway-panel{
+    position:absolute;top:14px;right:14px;z-index:5;
+    display:flex;align-items:center;gap:10px;
+    background:rgba(21,25,33,0.88);backdrop-filter:blur(4px);
+    border:1px solid var(--border);border-radius:var(--radius);
+    padding:8px 12px;
+  }
   .chart{background:var(--bg);position:relative;display:flex;align-items:center;justify-content:center;padding:16px;min-height:0;overflow:hidden}
   #view{width:min(78vh,760px);height:auto}
   footer{padding:12px 22px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
@@ -155,15 +162,6 @@
         <label class="switch"><input type="checkbox" id="snaptog" autocomplete="off"><span class="knob"></span></label>
       </div>
     </div>
-
-    <div class="group">
-      <h2>Driveway</h2>
-      <p class="items-hint">click two spots to place the driveway, then click on a segment to add a bend point — each point is a draggable handle. Width ≈1.5× a car (9&nbsp;ft).</p>
-      <div class="driveway-actions">
-        <button id="drivewayClear" class="driveway-btn">Clear</button>
-        <span id="drivewayCount" class="driveway-count">0 pts</span>
-      </div>
-    </div>
   </div>
 
   <div class="chart">
@@ -177,6 +175,10 @@
       <div class="stat"><span class="k">Structures</span><span class="v" id="statStructures">—</span></div>
       <div class="stat"><span class="k">Open yard</span><span class="v" id="statYard">—</span></div>
       <div class="stat"><span class="k">Yard acreage</span><span class="v" id="statYardAcres">—</span></div>
+    </div>
+    <div class="driveway-panel">
+      <button id="drivewayClear" class="driveway-btn" title="Clear the driveway">Clear</button>
+      <span id="drivewayCount" class="driveway-count">0 pts</span>
     </div>
   </div>
 </main>
