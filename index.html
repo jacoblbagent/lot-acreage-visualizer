@@ -144,7 +144,7 @@
 
     <div class="group">
       <h2>Driveway</h2>
-      <p class="items-hint">click on the lot to trace a driveway path — it expands to ~1.5× a car (about 9&nbsp;ft) wide. Double-click to finish.</p>
+      <p class="items-hint">click one spot, then a second spot to place a straight driveway — it expands to ~1.5× a car (≈9&nbsp;ft) wide. Drag it to move, use the end handles to rotate.</p>
       <div class="driveway-actions">
         <button id="drivewayClear" class="driveway-btn">Clear</button>
         <span id="drivewayCount" class="driveway-count">0 pts</span>
@@ -174,7 +174,6 @@
   var ACRE = 43560, PAD = 52, SIZE = 620;
   var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:true,
                houseFx:null, houseFy:null, driveway:[], drivewayDone:false };
-  var dwPointTimer = null;
 
   // Everyday structures with realistic average footprint sizes (width × depth, ft)
   var ITEMS = [
@@ -749,7 +748,7 @@
       state.snapOn = this.checked;
     });
 
-    // ---- driveway clicking ----
+    // ---- driveway: first click = start, second click = end (straight segment) ----
     function insideBox(pt, b){
       return b && pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h;
     }
@@ -765,23 +764,22 @@
       for(var k=0;k<activeItemBoxes.length;k++){
         if(insideBox(p, activeItemBoxes[k])) return;
       }
-      // defer the add so a quick second click (start of a double-click) cancels it
-      clearTimeout(dwPointTimer);
-      dwPointTimer = setTimeout(function(){
-        state.driveway.push({ x:p.x, y:p.y });
-        $id('drivewayCount').textContent = state.driveway.length + ' pt' + (state.driveway.length===1?'':'s');
+      state.driveway.push({ x:p.x, y:p.y });
+      if(state.driveway.length === 1){
+        // first click sets the start
+        $id('drivewayCount').textContent = 'set end point';
         render();
-      }, 260);
-    });
-    svg.addEventListener('dblclick', function(ev){
-      clearTimeout(dwPointTimer);   // cancel the pending single-click point
-      state.drivewayDone = true;
-      render();                     // show the rotation handles
+      } else {
+        // second click sets the end and completes the driveway
+        state.driveway = [state.driveway[0], state.driveway[state.driveway.length-1]];
+        state.drivewayDone = true;
+        $id('drivewayCount').textContent = '2 pts';
+        render();
+      }
     });
 
     // clear driveway (also lets the user start a fresh one)
     $id('drivewayClear').addEventListener('click', function(){
-      clearTimeout(dwPointTimer);
       state.driveway = [];
       state.drivewayDone = false;
       $id('drivewayCount').textContent = '0 pts';
