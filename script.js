@@ -1093,6 +1093,27 @@ function makeDrivewayDraggable(group, dwPx){
     // ---- undo / redo buttons + keyboard shortcuts ----
     $id('undoBtn').addEventListener('click', undo);
     $id('redoBtn').addEventListener('click', redo);
+
+    // ---- Clear all: resets the whole scene in one undoable step ----
+    $id('clearAllBtn').addEventListener('click', function(){
+      var hadAnything =
+        (function(){ for(var k in state.items) return true; return false; })() ||
+        state.driveway.length > 0 ||
+        state.houseFx !== null || state.houseFy !== null;
+      if(!hadAnything) return;
+      beginChange();
+      state.items = {};
+      state.driveway = [];
+      state.drivewayDone = false;
+      state.houseFx = null; state.houseFy = null;
+      state.lastInteract = null;
+      commitChange();
+      recordHistory({ action:'clear-all' });
+      syncButtons();
+      syncDrivewayUI();
+      render();
+    });
+
     document.addEventListener('keydown', function(ev){
       var mod = ev.ctrlKey || ev.metaKey;
       if(mod && (ev.key === 'z' || ev.key === 'Z')){

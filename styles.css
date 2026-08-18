@@ -19,6 +19,7 @@
   .undo-btn{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
   .undo-btn:hover{border-color:var(--accent);color:var(--accent)}
   .undo-btn:disabled{opacity:.4;cursor:default;border-color:var(--border);color:var(--muted)}
+  #clearAllBtn:hover{border-color:#f85149;color:#f85149}
   main{display:grid;grid-template-columns:330px 1fr;flex:1;min-height:0}
   .controls{background:var(--panel);border-right:1px solid var(--border);padding:20px;overflow-y:auto;min-height:0}
   .group{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px}
