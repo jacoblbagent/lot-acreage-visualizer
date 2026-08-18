@@ -21,7 +21,10 @@
     padding:16px 22px;border-bottom:1px solid var(--border);background:var(--panel);
   }
   header h1{font-size:18px;font-weight:620;letter-spacing:.2px}
-  header .sub{color:var(--muted);font-size:13px;margin-left:auto}
+  header .sub{color:var(--muted);font-size:13px}
+  .header-actions{margin-left:auto;display:flex;gap:8px}
+  .undo-btn{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
+  .undo-btn:hover{border-color:var(--accent);color:var(--accent)}
   main{display:grid;grid-template-columns:330px 1fr;flex:1;min-height:0}
   .controls{background:var(--panel);border-right:1px solid var(--border);padding:20px;overflow-y:auto;min-height:0}
   .group{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px}
@@ -101,6 +104,10 @@
 <header>
   <h1>Lot Acreage Visualizer</h1>
   <span class="sub">single-story home footprint on your parcel, to scale</span>
+  <span class="header-actions">
+    <button class="undo-btn" id="undoBtn" title="Undo (Ctrl+Z)">↶ Undo</button>
+    <button class="undo-btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+  </span>
 </header>
 <main>
   <div class="controls">
@@ -217,6 +224,66 @@
     state.history.push(entry);
     if(state.history.length > HISTORY_CAP) state.history = state.history.slice(-HISTORY_CAP);
     saveState();
+  }
+
+  // ---- undo / redo (snapshot of the whole scene) ----
+  var undoStack = [], redoStack = [], pendingSnap = null;
+  function snapScene(){
+    var items = {};
+    for(var k in state.items){
+      items[k] = state.items[k] === null ? null : { x:state.items[k].x, y:state.items[k].y };
+    }
+    return {
+      items: items,
+      driveway: state.driveway.map(function(p){ return {x:p.x, y:p.y}; }),
+      drivewayDone: state.drivewayDone,
+      houseFx: state.houseFx, houseFy: state.houseFy
+    };
+  }
+  function applyScene(s){
+    state.items = s.items;
+    state.driveway = s.driveway.map(function(p){ return {x:p.x, y:p.y}; });
+    state.drivewayDone = s.drivewayDone;
+    state.houseFx = s.houseFx; state.houseFy = s.houseFy;
+  }
+  function beginChange(){ pendingSnap = snapScene(); }
+  function commitChange(){
+    if(!pendingSnap) return;
+    undoStack.push(pendingSnap);
+    pendingSnap = null;
+    if(undoStack.length > 100) undoStack.shift();
+    redoStack.length = 0;      // a new change invalidates redo
+    saveState();
+  }
+  function undo(){
+    if(!undoStack.length) return false;
+    redoStack.push(snapScene());
+    applyScene(undoStack.pop());
+    syncButtons();
+    syncDrivewayUI();
+    render();
+    saveState();
+    return true;
+  }
+  function redo(){
+    if(!redoStack.length) return false;
+    undoStack.push(snapScene());
+    applyScene(redoStack.pop());
+    syncButtons();
+    syncDrivewayUI();
+    render();
+    saveState();
+    return true;
+  }
+  function syncButtons(){
+    document.querySelectorAll('#items button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.id in state.items);
+    });
+  }
+  function syncDrivewayUI(){
+    if(state.drivewayDone) $id('drivewayCount').textContent = state.driveway.length + ' pts';
+    else if(state.driveway.length === 1) $id('drivewayCount').textContent = 'set end point';
+    else $id('drivewayCount').textContent = '0 pts';
   }
 
   // Everyday structures with realistic average footprint sizes (width × depth, ft)
@@ -568,6 +635,7 @@
     rect.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       state.lastInteract = { type:'house' };
+      beginChange();
       var p = svgPoint(ev);
       var cx = Number(rect.getAttribute('x')), cy = Number(rect.getAttribute('y'));
       start = { dx: p.x - cx, dy: p.y - cy, ox: cx, oy: cy };
@@ -599,8 +667,10 @@
     }
     function onUp(){
       if(start && (start.ox !== state.houseFx*lotBox.w+lotBox.x || start.oy !== state.houseFy*lotBox.h+lotBox.y)){
+        commitChange();
         recordHistory({ action:'move', target:'house', x:state.houseFx, y:state.houseFy });
       } else {
+        pendingSnap = null;
         saveState();
       }
       start = null;
@@ -761,6 +831,7 @@ function makeDrivewayDraggable(group, dwPx){
     group.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       state.lastInteract = { type:'item', id:it.id };
+      beginChange();
       var p = svgPoint(ev);
       start = { dx: p.x - group._bx, dy: p.y - group._by, ox: state.items[it.id].x, oy: state.items[it.id].y };
       document.addEventListener('mousemove', onMove);
@@ -802,8 +873,10 @@ function makeDrivewayDraggable(group, dwPx){
     function onUp(){
       if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
          state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
+        commitChange();
         recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
       } else {
+        pendingSnap = null;
         saveState();
       }
       start = null;
@@ -825,6 +898,7 @@ function makeDrivewayDraggable(group, dwPx){
     rect.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       state.lastInteract = { type:'item', id:it.id };
+      beginChange();
       var p = svgPoint(ev);
       start = {
         dx: p.x - state.items[it.id].x,
@@ -876,7 +950,9 @@ function makeDrivewayDraggable(group, dwPx){
       if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
          state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
         recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+        commitChange();
       } else {
+        pendingSnap = null;
         saveState();
       }
       start = null;
@@ -950,24 +1026,27 @@ function makeDrivewayDraggable(group, dwPx){
       btn.title = it.w + '\u00d7' + it.d + '\u2032';
       if(it.id in state.items) btn.classList.add('on');   // restore loaded state
       btn.addEventListener('click', function(){
-        if(it.id in state.items){
-          // deleting via the toggle
-          var was = state.items[it.id];
-          delete state.items[it.id];
-          btn.classList.remove('on');
-          recordHistory({ action:'remove', target:'item', id:it.id, x: was ? was.x : null, y: was ? was.y : null });
-          state.lastInteract = null;
-        } else {
-          state.items[it.id] = null;
-          btn.classList.add('on');
-          state.lastInteract = { type:'item', id:it.id };
-          render();
-          var placed = state.items[it.id];
-          recordHistory({ action:'add', target:'item', id:it.id, x: placed ? placed.x : null, y: placed ? placed.y : null });
-          return; // render already called
-        }
+      beginChange();
+      if(it.id in state.items){
+        // deleting via the toggle
+        var was = state.items[it.id];
+        delete state.items[it.id];
+        btn.classList.remove('on');
+        commitChange();
+        recordHistory({ action:'remove', target:'item', id:it.id, x: was ? was.x : null, y: was ? was.y : null });
+        state.lastInteract = null;
         render();
-      });
+      } else {
+        // adding via the toggle (auto-placed on next render)
+        state.items[it.id] = null;
+        btn.classList.add('on');
+        state.lastInteract = { type:'item', id:it.id };
+        render();
+        commitChange();
+        var placed = state.items[it.id];
+        recordHistory({ action:'add', target:'item', id:it.id, x: placed ? placed.x : null, y: placed ? placed.y : null });
+      }
+    });
       itemsWrap.appendChild(btn);
     });
 
@@ -994,6 +1073,7 @@ function makeDrivewayDraggable(group, dwPx){
       for(var k=0;k<activeItemBoxes.length;k++){
         if(insideBox(p, activeItemBoxes[k])) return;
       }
+      if(state.driveway.length === 0) beginChange();   // snapshot before drawing starts
       state.driveway.push({ x:p.x, y:p.y });
       state.lastInteract = { type:'driveway' };
       if(state.driveway.length === 1){
@@ -1006,6 +1086,7 @@ function makeDrivewayDraggable(group, dwPx){
         state.drivewayDone = true;
         $id('drivewayCount').textContent = '2 pts';
         render();
+        commitChange();
         recordHistory({ action:'add', target:'driveway', x:state.driveway[0].x, y:state.driveway[0].y });
       }
     });
@@ -1013,16 +1094,18 @@ function makeDrivewayDraggable(group, dwPx){
     // clear driveway (also lets the user start a fresh one)
     $id('drivewayClear').addEventListener('click', function(){
       if(state.driveway.length){
+        beginChange();
         var pts = state.driveway.map(function(p){ return {x:p.x, y:p.y}; });
-        recordHistory({ action:'remove', target:'driveway', x: pts[0]?pts[0].x:null, y: pts[0]?pts[0].y:null, count: state.driveway.length });
+        state.driveway = [];
+        state.drivewayDone = false;
+        $id('drivewayCount').textContent = '0 pts';
+        state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'driveway', x: pts[0]?pts[0].x:null, y: pts[0]?pts[0].y:null, count: pts.length });
+        render();
       } else {
         saveState();
       }
-      state.driveway = [];
-      state.drivewayDone = false;
-      $id('drivewayCount').textContent = '0 pts';
-      state.lastInteract = null;
-      render();
     });
 
     // ---- Backspace deletes the last item / house / driveway the user touched ----
@@ -1034,32 +1117,51 @@ function makeDrivewayDraggable(group, dwPx){
       var li = state.lastInteract;
       if(!li) return;
       ev.preventDefault();
+      beginChange();
       if(li.type === 'item' && li.id in state.items){
         var was = state.items[li.id];
         delete state.items[li.id];
         var btn = document.querySelector('#items button[data-id="' + li.id + '"]');
         if(btn) btn.classList.remove('on');
-        recordHistory({ action:'remove', target:'item', id:li.id, x: was?was.x:null, y: was?was.y:null });
         state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'item', id:li.id, x: was?was.x:null, y: was?was.y:null });
         render();
       } else if(li.type === 'house'){
         // reset house to default (centered)
-        recordHistory({ action:'remove', target:'house', x:state.houseFx, y:state.houseFy });
         state.houseFx = null; state.houseFy = null;
         state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'house', x:state.houseFx, y:state.houseFy });
         render();
       } else if(li.type === 'driveway'){
         var cp = state.driveway.map(function(p){ return {x:p.x, y:p.y}; });
-        recordHistory({ action:'remove', target:'driveway', x: cp[0]?cp[0].x:null, y: cp[0]?cp[0].y:null, count: state.driveway.length });
         state.driveway = [];
         state.drivewayDone = false;
         $id('drivewayCount').textContent = '0 pts';
         state.lastInteract = null;
+        commitChange();
+        recordHistory({ action:'remove', target:'driveway', x: cp[0]?cp[0].x:null, y: cp[0]?cp[0].y:null, count: cp.length });
         render();
       }
     });
 
     window.addEventListener('resize', render);
+
+    // ---- undo / redo buttons + keyboard shortcuts ----
+    $id('undoBtn').addEventListener('click', undo);
+    $id('redoBtn').addEventListener('click', redo);
+    document.addEventListener('keydown', function(ev){
+      var mod = ev.ctrlKey || ev.metaKey;
+      if(mod && (ev.key === 'z' || ev.key === 'Z')){
+        if(ev.shiftKey) redo(); else undo();
+        ev.preventDefault();
+      } else if(mod && (ev.key === 'y' || ev.key === 'Y')){
+        redo();
+        ev.preventDefault();
+      }
+    });
+
     render();
   }
 
