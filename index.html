@@ -58,6 +58,11 @@
   }
   .seg-toggle button.active{background:var(--accent);color:#0b0e14;font-weight:600}
   .presets{display:flex;flex-wrap:wrap;gap:4px}
+  .presets .item-cat{
+    flex:0 0 100%;width:100%;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--muted);margin:6px 0 2px;font-weight:600;
+  }
+  .presets .item-cat:first-child{margin-top:0}
   .presets button{
     background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);
     padding:3px 7px;font-size:12px;cursor:pointer;font-family:inherit;line-height:1;
@@ -288,44 +293,53 @@
     else $id('drivewayCount').textContent = '0 pts';
   }
 
-  // Everyday structures with realistic average footprint sizes (width × depth, ft)
+  // Everyday structures with realistic average footprint sizes (width × depth, ft),
+  // grouped by category (cat) in the sidebar.
   var ITEMS = [
-    { id:'garage1',  name:'1-car garage', w:12, d:20, color:'#8b93a7' },
-    { id:'garage2',  name:'2-car garage', w:22, d:24, color:'#7d879c' },
-    { id:'car',      name:'Car',          w:6,  d:16, color:'#e0672b' },
-    { id:'shed',     name:'Shed',         w:10, d:12, color:'#a8906a' },
-    { id:'deck',     name:'Deck',         w:16, d:12, color:'#c9a86a' },
-    { id:'patio',    name:'Patio',        w:14, d:14, color:'#9aa5b1' },
-    { id:'pool',     name:'Pool',         w:16, d:32, color:'#58a6ff' },
-    { id:'hottub',   name:'Hot tub',      w:7,  d:7,  color:'#5fd38a' },
-    { id:'playset',  name:'Play set',     w:10, d:12, color:'#e3b341' },
-    { id:'garden',   name:'Garden',       w:8,  d:16, color:'#7fb069' },
-    { id:'firepit',  name:'Fire pit',     w:5,  d:5,  color:'#e0672b' },
-    { id:'dogrun',   name:'Dog run',      w:8,  d:20, color:'#b08968' },
-    { id:'greenhouse',name:'Greenhouse',  w:10, d:12, color:'#8fd3a0' },
-    { id:'coop',     name:'Chicken coop', w:8,  d:10, color:'#d2a04a' },
-    { id:'treeS',    name:'Tree (small)', w:6,  d:6,  color:'#3f9e63', tree:true },
-    { id:'treeM',    name:'Tree (med)',   w:14, d:14, color:'#2f8f5a', tree:true },
-    { id:'treeL',    name:'Tree (large)', w:24, d:24, color:'#22794a', tree:true },
-    { id:'bbq',      name:'BBQ / grill',  w:5,  d:7,  color:'#9aa5b1' },
-    { id:'mailbox',  name:'Mailbox',      w:2,  d:3,  color:'#8b93a7' },
-    { id:'trash',    name:'Trash cans',   w:3,  d:6,  color:'#6b7280' },
-    { id:'tramp',    name:'Trampoline',   w:14, d:14, color:'#d2a04a' },
-    { id:'gazebo',   name:'Gazebo',       w:12, d:12, color:'#b08968' },
-    { id:'picnic',   name:'Picnic table', w:6,  d:10, color:'#a8906a' },
-    { id:'hammock',  name:'Hammock',      w:5,  d:12, color:'#c9a86a' },
-    { id:'birdbath', name:'Bird bath',    w:3,  d:3,  color:'#8b93a7' },
-    { id:'pond',     name:'Pond',         w:10, d:14, color:'#4a90c4' },
-    { id:'compost',  name:'Compost bin',  w:4,  d:4,  color:'#7a5a3a' },
-    { id:'playhouse',name:'Playhouse',    w:8,  d:10, color:'#e3b341' },
-    { id:'swings',   name:'Swing set',    w:8,  d:14, color:'#e3a541' },
-    { id:'berries',  name:'Berry patch',  w:6,  d:10, color:'#8a5a9a' },
-    { id:'sandbox',  name:'Sandbox',      w:6,  d:8,  color:'#d8b471' },
-    { id:'treehouse',name:'Tree house',   w:8,  d:8,  color:'#a57d4f' },
-    { id:'well',     name:'Well',         w:4,  d:4,  color:'#7d879c' },
-    { id:'hvac',     name:'AC unit',      w:5,  d:5,  color:'#6b7280' },
-    { id:'generator',name:'Generator',    w:3,  d:5,  color:'#9aa5b1' },
-    { id:'woodpile', name:'Wood pile',    w:6,  d:10, color:'#8a6a3a' }
+    // ---------- Vehicles ----------
+    { id:'car',      name:'Car',          w:6,  d:16, color:'#e0672b', cat:'Vehicles' },
+    // ---------- Buildings ----------
+    { id:'garage1',  name:'1-car garage', w:12, d:20, color:'#8b93a7', cat:'Buildings' },
+    { id:'garage2',  name:'2-car garage', w:22, d:24, color:'#7d879c', cat:'Buildings' },
+    { id:'shed',     name:'Shed',         w:10, d:12, color:'#a8906a', cat:'Buildings' },
+    { id:'greenhouse',name:'Greenhouse',  w:10, d:12, color:'#8fd3a0', cat:'Buildings' },
+    { id:'coop',     name:'Chicken coop', w:8,  d:10, color:'#d2a04a', cat:'Buildings' },
+    { id:'playhouse',name:'Playhouse',    w:8,  d:10, color:'#e3b341', cat:'Buildings' },
+    { id:'treehouse',name:'Tree house',   w:8,  d:8,  color:'#a57d4f', cat:'Buildings' },
+    // ---------- Patio & Outdoor ----------
+    { id:'deck',     name:'Deck',         w:16, d:12, color:'#c9a86a', cat:'Patio & Outdoor' },
+    { id:'patio',    name:'Patio',        w:14, d:14, color:'#9aa5b1', cat:'Patio & Outdoor' },
+    { id:'pool',     name:'Pool',         w:16, d:32, color:'#58a6ff', cat:'Patio & Outdoor' },
+    { id:'hottub',   name:'Hot tub',      w:7,  d:7,  color:'#5fd38a', cat:'Patio & Outdoor' },
+    { id:'firepit',  name:'Fire pit',     w:5,  d:5,  color:'#e0672b', cat:'Patio & Outdoor' },
+    { id:'bbq',      name:'BBQ / grill',  w:5,  d:7,  color:'#9aa5b1', cat:'Patio & Outdoor' },
+    { id:'gazebo',   name:'Gazebo',       w:12, d:12, color:'#b08968', cat:'Patio & Outdoor' },
+    { id:'picnic',   name:'Picnic table', w:6,  d:10, color:'#a8906a', cat:'Patio & Outdoor' },
+    { id:'hammock',  name:'Hammock',      w:5,  d:12, color:'#c9a86a', cat:'Patio & Outdoor' },
+    // ---------- Play & Kids ----------
+    { id:'playset',  name:'Play set',     w:10, d:12, color:'#e3b341', cat:'Play & Kids' },
+    { id:'swings',   name:'Swing set',    w:8,  d:14, color:'#e3a541', cat:'Play & Kids' },
+    { id:'tramp',    name:'Trampoline',   w:14, d:14, color:'#d2a04a', cat:'Play & Kids' },
+    { id:'sandbox',  name:'Sandbox',      w:6,  d:8,  color:'#d8b471', cat:'Play & Kids' },
+    // ---------- Garden & Landscape ----------
+    { id:'garden',   name:'Garden',       w:8,  d:16, color:'#7fb069', cat:'Garden & Landscape' },
+    { id:'berries',  name:'Berry patch',  w:6,  d:10, color:'#8a5a9a', cat:'Garden & Landscape' },
+    { id:'pond',     name:'Pond',         w:10, d:14, color:'#4a90c4', cat:'Garden & Landscape' },
+    { id:'birdbath', name:'Bird bath',    w:3,  d:3,  color:'#8b93a7', cat:'Garden & Landscape' },
+    { id:'compost',  name:'Compost bin',  w:4,  d:4,  color:'#7a5a3a', cat:'Garden & Landscape' },
+    // ---------- Pets & Animals ----------
+    { id:'dogrun',   name:'Dog run',      w:8,  d:20, color:'#b08968', cat:'Pets & Animals' },
+    // ---------- Utility & Storage ----------
+    { id:'mailbox',  name:'Mailbox',      w:2,  d:3,  color:'#8b93a7', cat:'Utility & Storage' },
+    { id:'trash',    name:'Trash cans',   w:3,  d:6,  color:'#6b7280', cat:'Utility & Storage' },
+    { id:'well',     name:'Well',         w:4,  d:4,  color:'#7d879c', cat:'Utility & Storage' },
+    { id:'hvac',     name:'AC unit',      w:5,  d:5,  color:'#6b7280', cat:'Utility & Storage' },
+    { id:'generator',name:'Generator',    w:3,  d:5,  color:'#9aa5b1', cat:'Utility & Storage' },
+    { id:'woodpile', name:'Wood pile',    w:6,  d:10, color:'#8a6a3a', cat:'Utility & Storage' },
+    // ---------- Trees ----------
+    { id:'treeS',    name:'Tree (small)', w:6,  d:6,  color:'#3f9e63', tree:true, cat:'Trees' },
+    { id:'treeM',    name:'Tree (med)',   w:14, d:14, color:'#2f8f5a', tree:true, cat:'Trees' },
+    { id:'treeL',    name:'Tree (large)', w:24, d:24, color:'#22794a', tree:true, cat:'Trees' }
   ];
 
   var svg = document.getElementById('view');
@@ -1054,7 +1068,15 @@ function makeDrivewayDraggable(group, dwPx){
 
     // build item toggles
     var itemsWrap = $id('items');
+    var curCat = null;
     ITEMS.forEach(function(it){
+      if(it.cat !== curCat){
+        curCat = it.cat;
+        var head = document.createElement('div');
+        head.className = 'item-cat';
+        head.textContent = curCat;
+        itemsWrap.appendChild(head);
+      }
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.dataset.id = it.id;
