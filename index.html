@@ -152,7 +152,7 @@
       <div class="items-hint">average sizes · toggled items are placed in the yard</div>
       <div class="snap-row">
         <span>Snap placement</span>
-        <label class="switch"><input type="checkbox" id="snaptog" checked autocomplete="off"><span class="knob"></span></label>
+        <label class="switch"><input type="checkbox" id="snaptog" autocomplete="off"><span class="knob"></span></label>
       </div>
     </div>
 
@@ -185,7 +185,7 @@
 <script>
 (function(){
   var ACRE = 43560, PAD = 52, SIZE = 620;
-  var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:true,
+  var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:false,
                houseFx:null, houseFy:null, driveway:[], drivewayDone:false,
                lastInteract:null, history:[] };
   var LS_KEY = 'lotAcreageViz';
@@ -714,6 +714,7 @@ function makeDrivewayDraggable(group, dwPx){
       ev.preventDefault();
       ev.stopPropagation();
       state.lastInteract = { type:'driveway' };
+      beginChange();
       var p = svgPoint(ev);
       var start = { x:p.x, y:p.y, pts: state.driveway.map(function(pt){return {x:pt.x,y:pt.y};}) };
       var dragged = false;
@@ -744,6 +745,7 @@ function makeDrivewayDraggable(group, dwPx){
         } else {
           recordHistory({ action:'move', target:'driveway', count: state.driveway.length });
         }
+        commitChange();   // driveway drag / insert recorded for undo
       }
     });
     // don't bubble to the svg click-to-draw handler
@@ -783,6 +785,7 @@ function makeDrivewayDraggable(group, dwPx){
       ev.preventDefault();
       ev.stopPropagation();
       state.lastInteract = { type:'driveway' };
+      beginChange();
       var off = svgPoint(ev);
       var actualIdx = handleIdx;   // move the exact point this handle belongs to
       var startX = state.driveway[actualIdx].x, startY = state.driveway[actualIdx].y;
@@ -806,6 +809,7 @@ function makeDrivewayDraggable(group, dwPx){
       }
       function onUp(){
         recordHistory({ action:'move', target:'driveway', count: state.driveway.length });
+        commitChange();   // driveway point move recorded for undo
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
@@ -1050,9 +1054,9 @@ function makeDrivewayDraggable(group, dwPx){
       itemsWrap.appendChild(btn);
     });
 
-    // snap placement toggle (always reset to ON after reload)
-    state.snapOn = true;
-    $id('snaptog').checked = true;
+    // snap placement toggle (resets to OFF — its default — after reload)
+    state.snapOn = false;
+    $id('snaptog').checked = false;
     $id('snaptog').addEventListener('change', function(){
       state.snapOn = this.checked;
     });
