@@ -159,7 +159,8 @@
 <script>
 (function(){
   var ACRE = 43560, PAD = 52, SIZE = 620;
-  var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:true };
+  var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:true,
+               houseFx:null, houseFy:null };
 
   // Everyday structures with realistic average footprint sizes (width × depth, ft)
   var ITEMS = [
@@ -234,6 +235,7 @@
     svg.setAttribute('viewBox', '0 0 '+SIZE+' '+SIZE);
 
     var lx = (SIZE - W*scale)/2, ly = (SIZE - D*scale)/2;
+    var lotBox = { x:lx, y:ly, w:W*scale, h:D*scale };
 
     // lot outline
     el('rect', { x:lx, y:ly, width:W*scale, height:D*scale,
@@ -258,10 +260,21 @@
       hWidth *= r; hDepth *= r;
     }
 
-    var hx = lx + (W*scale - hWidth*scale)/2;
-    var hy = ly + (D*scale - hDepth*scale)/2;
-    el('rect', { x:hx, y:hy, width:hWidth*scale, height:hDepth*scale,
-      fill:'#58a6ff', 'fill-opacity':0.35, stroke:'#58a6ff', 'stroke-width':2 });
+    var hw_px = hWidth*scale, hd_px = hDepth*scale;
+    var hx, hy;
+    if(state.houseFx !== null){
+      // max corner so the house stays inside the lot
+      var spanX = W*scale - hw_px, spanY = D*scale - hd_px;
+      hx = lx + state.houseFx * spanX;
+      hy = ly + state.houseFy * spanY;
+      hx = Math.max(lx, Math.min(hx, lx + spanX));
+      hy = Math.max(ly, Math.min(hy, ly + spanY));
+    } else {
+      hx = lx + (W*scale - hw_px)/2;
+      hy = ly + (D*scale - hd_px)/2;
+    }
+    var houseRect = el('rect', { x:hx, y:hy, width:hw_px, height:hd_px,
+      fill:'#58a6ff', 'fill-opacity':0.35, stroke:'#58a6ff', 'stroke-width':2, 'cursor':'move' });
 
     // red overlay shown while an item is dragged over the house (no permanent border)
     activeHouseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
@@ -271,13 +284,10 @@
     // house label
     var hsq = fmt(hWidth*hDepth) + ' sq ft';
     var hwPx = hWidth*scale, hdPx = hDepth*scale;
-    if(hwPx > 60 && hdPx > 26){
-      var lo = el('text', { x:hx+hwPx/2, y:hy+hdPx/2+4, 'text-anchor':'middle',
-        'font-size':'13', fill:'#0b0e14', 'font-weight':'700' });
-      lo.textContent = hsq;
-    } else {
-      txt(hx+hwPx/2, hy+hdPx/2+3, fmt(hWidth*hDepth), { size:10, fill:'#0b0e14', weight:'700' });
-    }
+    var houseLabelEl = el('text', { x:hx+hwPx/2, y:hy+hdPx/2+4, 'text-anchor':'middle',
+      'font-size':'13', fill:'#0b0e14', 'font-weight':'700', 'pointer-events':'none' });
+    houseLabelEl.textContent = hsq;
+    makeHouseDraggable(houseRect, houseLabelEl, hw_px, hd_px, lotBox);
 
     // dimension labels
     var lw = Math.round(W*scale), ld = Math.round(D*scale);
@@ -286,7 +296,6 @@
     txt(lx-lxs, ly+D*scale/2, footLabel(D), { anchor:'end' });
 
     // ---- structures / items (place in yard, then freely draggable) ----
-    var lotBox = { x:lx, y:ly, w:W*scale, h:D*scale };
     var houseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
     var structSqft = 0;
     activeItemBoxes = [];
@@ -434,6 +443,48 @@
       if(!moved) break;
     }
     return { x:x, y:y };
+  }
+
+  // Drag the house anywhere within the lot, clamped on all sides. Stores its
+  // position as a lot fraction so it stays put across resizes/re-renders.
+  function makeHouseDraggable(rect, labelEl, w, h, lotBox){
+    var start = null;
+    rect.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      var p = svgPoint(ev);
+      var cx = Number(rect.getAttribute('x')), cy = Number(rect.getAttribute('y'));
+      start = { dx: p.x - cx, dy: p.y - cy };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    function onMove(ev){
+      if(!start) return;
+      var p = svgPoint(ev);
+      var nx = p.x - start.dx, ny = p.y - start.dy;
+      // clamp inside the lot
+      nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - w));
+      ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - h));
+      // store as fraction of available travel
+      state.houseFx = (nx - lotBox.x) / Math.max(1, lotBox.w - w);
+      state.houseFy = (ny - lotBox.y) / Math.max(1, lotBox.h - h);
+      rect.setAttribute('x', nx);
+      rect.setAttribute('y', ny);
+      activeHouseBox.x = nx; activeHouseBox.y = ny;
+      if(houseOverlay){
+        houseOverlay.setAttribute('x', nx);
+        houseOverlay.setAttribute('y', ny);
+      }
+      if(labelEl){
+        labelEl.setAttribute('x', nx + w/2);
+        labelEl.setAttribute('y', ny + h/2 + 4);
+        labelEl.style.pointerEvents = 'none';
+      }
+    }
+    function onUp(){
+      start = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
   }
 
   // Map a client/mouse position into SVG viewBox coordinates.
