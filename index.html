@@ -144,7 +144,7 @@
 
     <div class="group">
       <h2>Driveway</h2>
-      <p class="items-hint">click one spot, then a second spot to place a straight driveway — it expands to ~1.5× a car (≈9&nbsp;ft) wide. Drag it to move; drag an end handle to reposition that end.</p>
+      <p class="items-hint">click two spots to place the driveway, then click on a segment to add a bend point — each point is a draggable handle. Width ≈1.5× a car (9&nbsp;ft).</p>
       <div class="driveway-actions">
         <button id="drivewayClear" class="driveway-btn">Clear</button>
         <span id="drivewayCount" class="driveway-count">0 pts</span>
@@ -329,13 +329,12 @@
         'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'5 6',
         'stroke-opacity':0.6, 'pointer-events':'none' }, dvGroup);
       makeDrivewayDraggable(dvGroup, dwPx);
-      // rotation handles at each end of the driveway (once drawn)
+      // handles at every point of the driveway — each is a draggable pivot
       if(state.drivewayDone){
-        var endPts = [state.driveway[0], state.driveway[state.driveway.length-1]];
-        endPts.forEach(function(pt, idx){
+        state.driveway.forEach(function(pt, i){
           var h = el('circle', { cx:pt.x, cy:pt.y, r:9, fill:'#58a6ff', opacity:0.9,
             stroke:'#0b0e14', 'stroke-width':2, 'cursor':'grab' });
-          makeDrivewayRotate(h, pt, idx);
+          makeDrivewayRotate(h, pt, i);
         });
       }
     }
@@ -538,19 +537,21 @@
     }
   }
 
-  // Drag the whole driveway path as a unit. It is clipped to the lot, so any
-  // part pushed past the boundary is cut off; we also keep at least one point
-  // inside the lot so the user can't lose it entirely.
-  function makeDrivewayDraggable(group, dwPx){
+  // Insert / move points on the driveway. A drag moves the whole path (clipped to
+// the lot); a plain click inserts a new vertex on the nearest segment, which
+// gains its own pivot handle.
+function makeDrivewayDraggable(group, dwPx){
     group.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       ev.stopPropagation();
       var p = svgPoint(ev);
       var start = { x:p.x, y:p.y, pts: state.driveway.map(function(pt){return {x:pt.x,y:pt.y};}) };
+      var dragged = false;
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
       function onMove(e){
         var q = svgPoint(e);
+        if(Math.abs(q.x-p.x)>3 || Math.abs(q.y-p.y)>3) dragged = true;
         var dx = q.x - start.x, dy = q.y - start.y;
         var moved = start.pts.map(function(pt){ return { x:pt.x+dx, y:pt.y+dy }; });
         state.driveway = moved;
@@ -562,24 +563,52 @@
         state.driveway[0].y = Math.max(lb.y, Math.min(state.driveway[0].y, lb.y + lb.h));
         render();
       }
-      function onUp(){
+      function onUp(e){
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+        // click without dragging = insert a new vertex on the nearest segment
+        if(!dragged){
+          var q = (e && e.clientX != null) ? svgPoint(e) : p;
+          insertDrivewayPoint(p);
+          render();
+        }
       }
     });
-    // dragging also produces a click — don't let it add a new point
+    // don't bubble to the svg click-to-draw handler
     group.addEventListener('click', function(ev){ ev.stopPropagation(); });
     group.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
   }
 
-  // Rotate the whole driveway around a chosen endpoint. Dragging the handle arcs
-  // the path by the swept angle; the held endpoint stays fixed.
+  // Insert a new point into the driveway, splitting the segment it falls on
+  // (finds the closest segment and inserts the point between its two endpoints).
+  function insertDrivewayPoint(pt){
+    if(!pt || !isFinite(pt.x) || !isFinite(pt.y)) return;
+    var best = -1, bestD = 1e9;
+    for(var i=0;i<state.driveway.length-1;i++){
+      var a = state.driveway[i], b = state.driveway[i+1];
+      var d = distToSegment(pt, a, b);
+      if(d < bestD){ bestD = d; best = i; }
+    }
+    if(best === -1) return;
+    state.driveway.splice(best+1, 0, { x:pt.x, y:pt.y });
+    state.drivewayDone = true;
+  }
+  function distToSegment(p, a, b){
+    var dx = b.x-a.x, dy = b.y-a.y;
+    var len2 = dx*dx + dy*dy;
+    var t = len2 ? ((p.x-a.x)*dx + (p.y-a.y)*dy)/len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    var px2 = a.x + t*dx, py2 = a.y + t*dy;
+    return Math.hypot(p.x-px2, p.y-py2);
+  }
+
+  // Drag a single driveway point (pivot) with the mouse; the other points stay put.
   function makeDrivewayRotate(circle, anchorPt, handleIdx){
     circle.addEventListener('mousedown', function(ev){
       ev.preventDefault();
       ev.stopPropagation();
       var off = svgPoint(ev);
-      var actualIdx = (handleIdx === 0) ? 0 : state.driveway.length - 1;
+      var actualIdx = handleIdx;   // move the exact point this handle belongs to
       var startX = state.driveway[actualIdx].x, startY = state.driveway[actualIdx].y;
       var start = { dx: off.x - startX, dy: off.y - startY };
       document.addEventListener('mousemove', onMove);
