@@ -557,6 +557,9 @@
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     }
+    // clicking the house shouldn't start driveway drawing
+    rect.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    rect.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
   }
 
   // Insert / move points on the driveway. A drag moves the whole path (clipped to
@@ -747,6 +750,9 @@ function makeDrivewayDraggable(group, dwPx){
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     }
+    // clicking/merely touching a tree shouldn't start driveway drawing
+    group.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    group.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
   }
 
   // Drag an item rect anywhere within the lot bounds, clamped on all sides.
@@ -809,6 +815,9 @@ function makeDrivewayDraggable(group, dwPx){
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     }
+    // clicking/dragging an item shouldn't start driveway drawing
+    rect.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    rect.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
   }
 
   function init(){
