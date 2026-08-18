@@ -1,11 +1,21 @@
 (function(){
   var ACRE = 43560, PAD = 52, SIZE = 620;
+  // items: { itemTypeId: [ {uid, x, y}, ... ] } — multiple instances per type
   var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:false,
                houseFx:null, houseFy:null, driveway:[], drivewayDone:false,
                lotW:null, lotD:null,
                lastInteract:null, history:[] };
+  var UID = 1;                 // unique instance id counter
   var LS_KEY = 'lotAcreageViz';
   var HISTORY_CAP = 200;
+
+  function nextUid(){ return UID++; }
+
+  // Ensure state.items[id] is an array; returns it.
+  function instArray(id){
+    if(!state.items[id]) state.items[id] = [];
+    return state.items[id];
+  }
 
   // ---- persistence: history of added/deleted/moved items, kept in localStorage ----
   function saveState(){
@@ -26,7 +36,17 @@
       if(!raw) return;
       var s = JSON.parse(raw);
       if(s && typeof s === 'object'){
-        if(s.items) state.items = s.items;
+        if(s.items){
+          // migrate legacy single-instance layout ({id: {x,y}|null}) to arrays
+          var newItems = {};
+          for(var k in s.items){
+            var v = s.items[k];
+            if(Array.isArray(v)) newItems[k] = v;
+            else if(v === null) newItems[k] = [];
+            else newItems[k] = [{ uid: nextUid(), x: v.x, y: v.y }];
+          }
+          state.items = newItems;
+        }
         if(Array.isArray(s.driveway)) state.driveway = s.driveway;
         if(typeof s.drivewayDone === 'boolean') state.drivewayDone = s.drivewayDone;
         if(s.houseFx !== undefined) state.houseFx = s.houseFx;
@@ -47,7 +67,9 @@
   function snapScene(){
     var items = {};
     for(var k in state.items){
-      items[k] = state.items[k] === null ? null : { x:state.items[k].x, y:state.items[k].y };
+      items[k] = (state.items[k]||[]).map(function(inst){
+        return { uid: inst.uid, x: inst.x, y: inst.y };
+      });
     }
     return {
       items: items,
@@ -96,7 +118,12 @@
   }
   function syncButtons(){
     document.querySelectorAll('#items button').forEach(function(b){
-      b.classList.toggle('on', b.dataset.id in state.items);
+      var id = b.dataset.id;
+      var arr = state.items[id];
+      var n = Array.isArray(arr) ? arr.length : 0;
+      b.classList.toggle('on', n > 0);
+      var c = b.querySelector('.count');
+      if(c){ c.textContent = n > 0 ? n : ''; }
     });
   }
   function syncUndoRedo(){
@@ -358,70 +385,75 @@
     // existing laid-out items form the "occupied" set, so new items avoid them
     var placedBoxes = [];
     ITEMS.forEach(function(it){
-      if((it.id in state.items) && state.items[it.id] !== null){
-        placedBoxes.push({ x:state.items[it.id].x, y:state.items[it.id].y,
-          w:it.w*scale, h:it.d*scale });
-      }
+      var arr = state.items[it.id];
+      if(!Array.isArray(arr)) return;
+      arr.forEach(function(inst){
+        if(inst.x == null) return;   // not yet placed
+        placedBoxes.push({ x:inst.x, y:inst.y, w:it.w*scale, h:it.d*scale });
+      });
     });
     ITEMS.forEach(function(it){
-      if(!(it.id in state.items)) return;
+      var arr = state.items[it.id];
+      if(!Array.isArray(arr)) return;
       var iw = it.w*scale, ih = it.d*scale;
-      var pos = state.items[it.id];
-      var dx, dy;
-      // auto-place the first time an item is added, avoiding all already-placed items
-      if(pos === null){
-        var slot = findSlot(lotBox, iw, ih, houseBox, placedBoxes);
-        if(!slot) return;   // no room — skip
-        state.items[it.id] = { x:slot.x, y:slot.y };
-        pos = state.items[it.id];
-        dx = slot.x; dy = slot.y;
-        placedBoxes.push({ x:dx, y:dy, w:iw, h:ih });
-      } else {
-        // CLAMP FOR DISPLAY ONLY — never overwrite the committed position, so
-        // items pushed inward by a smaller lot return when the lot grows back.
-        dx = Math.max(lotBox.x, Math.min(pos.x, lotBox.x + lotBox.w - iw));
-        dy = Math.max(lotBox.y, Math.min(pos.y, lotBox.y + lotBox.h - ih));
-      }
-      structSqft += it.tree ? (it.w*it.w*Math.PI/4) : (it.w * it.d);
-      var r, labelEl = null, canopy = null;
-      if(it.tree){
-        // draw a translucent canopy + trunk, draggable as a unit
-        var r = el('g', { 'cursor':'move' });
-        r._bx = dx; r._by = dy;   // base top-left for translate math
-        var trunkH = Math.max(2, ih*0.18);
-        el('rect', { x:dx+iw/2-iw*0.06, y:dy+ih-trunkH, width:iw*0.12, height:trunkH,
-          fill:'#7a5636' }, r);
-        canopy = el('circle', { cx:dx+iw/2, cy:dy+ih*0.45, r:Math.max(3, iw*0.42),
-          fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.2,
-          cursor:'move' }, r);
-        labelEl = el('text', { x:dx+iw/2, y:dy+ih*0.45 - Math.max(3, iw*0.42) - 4,
-          'text-anchor':'middle', 'font-size':'9', fill:'#d7dbe4', 'font-weight':'600',
-          'pointer-events':'none' });
-        labelEl.textContent = it.name;
-      } else {
-        r = el('rect', { x:dx, y:dy, width:iw, height:ih,
-          fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.5,
-          'stroke-dasharray':'2 2', 'cursor':'move' });
-        var lbl = it.name + ' ' + it.w + '\u00d7' + it.d + '\u2032';
-        if(iw > 34 && ih > 22){
-          labelEl = el('text', { x:dx+iw/2, y:dy+ih/2+3.5, 'text-anchor':'middle',
-            'font-size':'9', fill:'#0b0e14', 'font-weight':'600', 'pointer-events':'none' });
-          labelEl.textContent = lbl;
+      arr.forEach(function(inst){
+        // ensure a uid for instances loaded without one
+        if(inst.uid == null) inst.uid = nextUid();
+        var dx, dy;
+        // auto-place the first time an instance is added, avoiding all placed
+        if(inst.x == null){
+          var slot = findSlot(lotBox, iw, ih, houseBox, placedBoxes);
+          if(!slot) return;   // no room — skip
+          inst.x = slot.x; inst.y = slot.y;
+          dx = slot.x; dy = slot.y;
+          placedBoxes.push({ x:dx, y:dy, w:iw, h:ih });
         } else {
-          labelEl = el('text', { x:dx+iw/2, y:Math.max(0, dy-5), 'text-anchor':'middle',
-            'font-size':'9', fill:'#d7dbe4', 'font-weight':'600', 'pointer-events':'none' });
-          labelEl.textContent = lbl;
+          // CLAMP FOR DISPLAY ONLY — never overwrite the committed position, so
+          // items pushed inward by a smaller lot return when the lot grows back.
+          dx = Math.max(lotBox.x, Math.min(inst.x, lotBox.x + lotBox.w - iw));
+          dy = Math.max(lotBox.y, Math.min(inst.y, lotBox.y + lotBox.h - ih));
         }
-      }
-      // record for drag-over collision + red overlay
-      activeItemBoxes.push({ id:it.id, x:dx, y:dy, w:iw, h:ih });
-      itemOverlays[it.id] = el('rect', { x:dx, y:dy, width:iw, height:ih,
-        fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
-      if(it.tree){
-        makeTreeDraggable(r, it, iw, ih, lotBox, labelEl, canopy);
-      } else {
-        makeDraggable(r, it, iw, ih, lotBox, labelEl);
-      }
+        structSqft += it.tree ? (it.w*it.w*Math.PI/4) : (it.w * it.d);
+        var r, labelEl = null, canopy = null;
+        if(it.tree){
+          // draw a translucent canopy + trunk, draggable as a unit
+          var r = el('g', { 'cursor':'move' });
+          r._bx = dx; r._by = dy;   // base top-left for translate math
+          var trunkH = Math.max(2, ih*0.18);
+          el('rect', { x:dx+iw/2-iw*0.06, y:dy+ih-trunkH, width:iw*0.12, height:trunkH,
+            fill:'#7a5636' }, r);
+          canopy = el('circle', { cx:dx+iw/2, cy:dy+ih*0.45, r:Math.max(3, iw*0.42),
+            fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.2,
+            cursor:'move' }, r);
+          labelEl = el('text', { x:dx+iw/2, y:dy+ih*0.45 - Math.max(3, iw*0.42) - 4,
+            'text-anchor':'middle', 'font-size':'9', fill:'#d7dbe4', 'font-weight':'600',
+            'pointer-events':'none' });
+          labelEl.textContent = it.name;
+        } else {
+          r = el('rect', { x:dx, y:dy, width:iw, height:ih,
+            fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.5,
+            'stroke-dasharray':'2 2', 'cursor':'move' });
+          var lbl = it.name + ' ' + it.w + '\u00d7' + it.d + '\u2032';
+          if(iw > 34 && ih > 22){
+            labelEl = el('text', { x:dx+iw/2, y:dy+ih/2+3.5, 'text-anchor':'middle',
+              'font-size':'9', fill:'#0b0e14', 'font-weight':'600', 'pointer-events':'none' });
+            labelEl.textContent = lbl;
+          } else {
+            labelEl = el('text', { x:dx+iw/2, y:Math.max(0, dy-5), 'text-anchor':'middle',
+              'font-size':'9', fill:'#d7dbe4', 'font-weight':'600', 'pointer-events':'none' });
+            labelEl.textContent = lbl;
+          }
+        }
+        // record for drag-over collision + red overlay (keyed by instance uid)
+        activeItemBoxes.push({ id:it.id, uid:inst.uid, x:dx, y:dy, w:iw, h:ih });
+        itemOverlays[inst.uid] = el('rect', { x:dx, y:dy, width:iw, height:ih,
+          fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
+        if(it.tree){
+          makeTreeDraggable(r, it, inst, iw, ih, lotBox, labelEl, canopy);
+        } else {
+          makeDraggable(r, it, inst, iw, ih, lotBox, labelEl);
+        }
+      });
     });
 
     // stats
@@ -485,12 +517,12 @@
   }
 
   // Snap/overlap targets for a drag: the house plus every placed item except
-  // the one currently being dragged.
-  function dragTargets(exceptId){
+  // the instance currently being dragged (excluded by uid).
+  function dragTargets(exceptUid){
     var t = [];
     if(activeHouseBox) t.push(activeHouseBox);
     for(var i=0;i<activeItemBoxes.length;i++){
-      if(activeItemBoxes[i].id === exceptId) continue;
+      if(activeItemBoxes[i].uid === exceptUid) continue;
       t.push(activeItemBoxes[i]);
     }
     return t;
@@ -773,11 +805,11 @@ function makeDrivewayDraggable(group, dwPx){
 
   // Drag a tree group (translates it, since a <g> has no x/y). Same clamp, snap
   // and overlap logic as makeDraggable.
-  function makeTreeDraggable(group, it, iw, ih, lotBox, labelEl, canopy){
+  function makeTreeDraggable(group, it, inst, iw, ih, lotBox, labelEl, canopy){
     var start = null;
     group.addEventListener('mousedown', function(ev){
       ev.preventDefault();
-      state.lastInteract = { type:'item', id:it.id };
+      state.lastInteract = { type:'item', id:it.id, uid: inst.uid };
       beginChange();
       var p = svgPoint(ev);
       start = { dx: p.x - group._bx, dy: p.y - group._by, ox: group._bx, oy: group._by };
@@ -798,30 +830,28 @@ function makeDrivewayDraggable(group, dwPx){
       nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
       ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
       if(state.snapOn){
-        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(it.id));
+        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(inst.uid));
         nx = sn.x; ny = sn.y;
         nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
         ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
-        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
+        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(inst.uid), lotBox);
         nx = no.x; ny = no.y;
       }
-      state.items[it.id].x = nx;
-      state.items[it.id].y = ny;
+      inst.x = nx; inst.y = ny;
       apply(nx, ny);
       var over = overlaps({ x:nx, y:ny, w:iw, h:ih }, activeHouseBox, 0);
       if(houseOverlay) houseOverlay.setAttribute('fill-opacity', over ? 0.45 : 0);
       for(var k=0;k<activeItemBoxes.length;k++){
         var ob = activeItemBoxes[k];
-        if(ob.id === it.id) continue;
+        if(ob.uid === inst.uid) continue;
         var isOver = overlaps({ x:nx, y:ny, w:iw, h:ih }, ob, 0);
-        if(itemOverlays[ob.id]) itemOverlays[ob.id].setAttribute('fill-opacity', isOver ? 0.45 : 0);
+        if(itemOverlays[ob.uid]) itemOverlays[ob.uid].setAttribute('fill-opacity', isOver ? 0.45 : 0);
       }
     }
     function onUp(){
-      if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
-         state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
+      if(start && (start.ox !== inst.x || start.oy !== inst.y) && (inst.x || inst.y)){
         commitChange();
-        recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+        recordHistory({ action:'move', target:'item', id:it.id, uid: inst.uid, x:inst.x, y:inst.y });
       } else {
         pendingSnap = null;
         saveState();
@@ -829,7 +859,7 @@ function makeDrivewayDraggable(group, dwPx){
       start = null;
       if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
       for(var k=0;k<activeItemBoxes.length;k++){
-        if(itemOverlays[activeItemBoxes[k].id]) itemOverlays[activeItemBoxes[k].id].setAttribute('fill-opacity', 0);
+        if(itemOverlays[activeItemBoxes[k].uid]) itemOverlays[activeItemBoxes[k].uid].setAttribute('fill-opacity', 0);
       }
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -840,16 +870,16 @@ function makeDrivewayDraggable(group, dwPx){
   }
 
   // Drag an item rect anywhere within the lot bounds, clamped on all sides.
-  function makeDraggable(rect, it, iw, ih, lotBox, labelEl){
+  function makeDraggable(rect, it, inst, iw, ih, lotBox, labelEl){
     var start = null;
     rect.addEventListener('mousedown', function(ev){
       ev.preventDefault();
-      state.lastInteract = { type:'item', id:it.id };
+      state.lastInteract = { type:'item', id:it.id, uid: inst.uid };
       beginChange();
       var p = svgPoint(ev);
       // offset from the DISPLAYED position (committed may have been clamped inward)
-      var bx = Math.max(lotBox.x, Math.min(state.items[it.id].x, lotBox.x + lotBox.w - iw));
-      var by = Math.max(lotBox.y, Math.min(state.items[it.id].y, lotBox.y + lotBox.h - ih));
+      var bx = Math.max(lotBox.x, Math.min(inst.x, lotBox.x + lotBox.w - iw));
+      var by = Math.max(lotBox.y, Math.min(inst.y, lotBox.y + lotBox.h - ih));
       start = {
         dx: p.x - bx,
         dy: p.y - by,
@@ -867,17 +897,16 @@ function makeDrivewayDraggable(group, dwPx){
       ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
       if(state.snapOn){
         // snap boundaries flush to the house and other items
-        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(it.id));
+        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(inst.uid));
         nx = sn.x; ny = sn.y;
         nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
         ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
         // never overlap: only outside boundaries may touch outside boundaries.
         // push the dragged item out to exact contact with the house/other items.
-        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
+        var no = resolveOverlap(nx, ny, iw, ih, dragTargets(inst.uid), lotBox);
         nx = no.x; ny = no.y;
       }
-      state.items[it.id].x = nx;
-      state.items[it.id].y = ny;
+      inst.x = nx; inst.y = ny;
       rect.setAttribute('x', nx);
       rect.setAttribute('y', ny);
       // keep the label with the moving item (inside if it fits, above otherwise)
@@ -891,15 +920,14 @@ function makeDrivewayDraggable(group, dwPx){
       // ...or overlaps another item
       for(var k=0;k<activeItemBoxes.length;k++){
         var ob = activeItemBoxes[k];
-        if(ob.id === it.id) continue;           // skip the item being dragged
+        if(ob.uid === inst.uid) continue;   // skip the item being dragged
         var isOver = overlaps({ x:nx, y:ny, w:iw, h:ih }, ob, 0);
-        if(itemOverlays[ob.id]) itemOverlays[ob.id].setAttribute('fill-opacity', isOver ? 0.45 : 0);
+        if(itemOverlays[ob.uid]) itemOverlays[ob.uid].setAttribute('fill-opacity', isOver ? 0.45 : 0);
       }
     }
     function onUp(){
-      if(start && (start.ox !== state.items[it.id].x || start.oy !== state.items[it.id].y) &&
-         state.items[it.id] && (state.items[it.id].x || state.items[it.id].y)){
-        recordHistory({ action:'move', target:'item', id:it.id, x:state.items[it.id].x, y:state.items[it.id].y });
+      if(start && (start.ox !== inst.x || start.oy !== inst.y) && (inst.x || inst.y)){
+        recordHistory({ action:'move', target:'item', id:it.id, uid: inst.uid, x:inst.x, y:inst.y });
         commitChange();
       } else {
         pendingSnap = null;
@@ -908,7 +936,7 @@ function makeDrivewayDraggable(group, dwPx){
       start = null;
       if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
       for(var k=0;k<activeItemBoxes.length;k++){
-        if(itemOverlays[activeItemBoxes[k].id]) itemOverlays[activeItemBoxes[k].id].setAttribute('fill-opacity', 0);
+        if(itemOverlays[activeItemBoxes[k].uid]) itemOverlays[activeItemBoxes[k].uid].setAttribute('fill-opacity', 0);
       }
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -981,31 +1009,27 @@ function makeDrivewayDraggable(group, dwPx){
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.dataset.id = it.id;
-      btn.textContent = it.name;
+      var btnLabel = document.createElement('span');
+      btnLabel.className = 'item-name';
+      btnLabel.textContent = it.name;
+      var btnCount = document.createElement('span');
+      btnCount.className = 'count';
+      btn.appendChild(btnLabel);
+      btn.appendChild(btnCount);
       btn.title = it.w + '\u00d7' + it.d + '\u2032';
-      if(it.id in state.items) btn.classList.add('on');   // restore loaded state
+      // each click adds one more instance of this item (auto-placed on render)
       btn.addEventListener('click', function(){
-      beginChange();
-      if(it.id in state.items){
-        // deleting via the toggle
-        var was = state.items[it.id];
-        delete state.items[it.id];
-        btn.classList.remove('on');
-        commitChange();
-        recordHistory({ action:'remove', target:'item', id:it.id, x: was ? was.x : null, y: was ? was.y : null });
-        state.lastInteract = null;
-        render();
-      } else {
-        // adding via the toggle (auto-placed on next render)
-        state.items[it.id] = null;
+        beginChange();
+        var arr = instArray(it.id);
+        var inst = { uid: nextUid(), x: null, y: null };   // x:null = auto-place me
+        arr.push(inst);
         btn.classList.add('on');
-        state.lastInteract = { type:'item', id:it.id };
+        state.lastInteract = { type:'item', id:it.id, uid: inst.uid };
         render();
         commitChange();
-        var placed = state.items[it.id];
-        recordHistory({ action:'add', target:'item', id:it.id, x: placed ? placed.x : null, y: placed ? placed.y : null });
-      }
-    });
+        recordHistory({ action:'add', target:'item', id:it.id, uid: inst.uid, count: arr.length });
+        syncButtons();
+      });
       itemsWrap.appendChild(btn);
     });
 
@@ -1060,14 +1084,24 @@ function makeDrivewayDraggable(group, dwPx){
       if(!li) return;
       ev.preventDefault();
       beginChange();
-      if(li.type === 'item' && li.id in state.items){
-        var was = state.items[li.id];
-        delete state.items[li.id];
-        var btn = document.querySelector('#items button[data-id="' + li.id + '"]');
-        if(btn) btn.classList.remove('on');
+      if(li.type === 'item'){
+        var arr = state.items[li.id];
+        if(Array.isArray(arr)){
+          // remove the specific instance (by uid) that was last interacted with
+          var was = null, idx = -1;
+          for(var i=0;i<arr.length;i++){
+            if(li.uid != null && arr[i].uid === li.uid){ was = arr[i]; idx = i; break; }
+          }
+          if(idx >= 0){ arr.splice(idx, 1); }
+          else { was = arr.pop(); }
+          if(arr.length === 0) delete state.items[li.id];
+          var btn = document.querySelector('#items button[data-id="' + li.id + '"]');
+          if(btn && arr.length===0) btn.classList.remove('on');
+        }
         state.lastInteract = null;
         commitChange();
-        recordHistory({ action:'remove', target:'item', id:li.id, x: was?was.x:null, y: was?was.y:null });
+        recordHistory({ action:'remove', target:'item', id:li.id, uid: was?was.uid:null, x: was?was.x:null, y: was?was.y:null });
+        syncButtons();
         render();
       } else if(li.type === 'house'){
         // reset house to default (centered)

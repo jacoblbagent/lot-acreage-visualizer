@@ -62,7 +62,13 @@
     background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);
     padding:3px 7px;font-size:12px;cursor:pointer;font-family:inherit;line-height:1;
     transition:border-color .15s,color .15s;
+    display:inline-flex;align-items:center;gap:5px;
   }
+  .presets button .count{
+    min-width:15px;height:15px;padding:0 3px;border-radius:8px;font-size:10px;line-height:15px;
+    text-align:center;background:var(--accent);color:#0b0e14;font-weight:700;
+  }
+  .presets button:not(.on) .count{display:none}
   .presets button:hover,.presets button.on{border-color:var(--accent);color:var(--accent)}
   .items-hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;margin-bottom:0}
   .driveway-btn{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
