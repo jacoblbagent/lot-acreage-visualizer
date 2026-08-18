@@ -386,6 +386,49 @@
     return { x: foundX ? fx : x, y: foundY ? fy : y };
   }
 
+  // Snap/overlap targets for a drag: the house plus every placed item except
+  // the one currently being dragged.
+  function dragTargets(exceptId){
+    var t = [];
+    if(activeHouseBox) t.push(activeHouseBox);
+    for(var i=0;i<activeItemBoxes.length;i++){
+      if(activeItemBoxes[i].id === exceptId) continue;
+      t.push(activeItemBoxes[i]);
+    }
+    return t;
+  }
+
+  // Prevent overlap entirely: if the dragged box intersects any target, push it
+  // out along the axis of least penetration so boundaries just touch. Repeats a
+  // few passes (with a tiny epsilon of slack) so items can't pass through.
+  function resolveOverlap(x, y, w, h, targets, lotBox){
+    var E = 0.001;
+    for(var pass=0; pass<12; pass++){
+      var moved = false;
+      for(var i=0;i<targets.length;i++){
+        var t = targets[i];
+        if(!overlaps({ x:x, y:y, w:w, h:h }, t, E)) continue;
+        // penetration on each axis
+        var penX = Math.min(x + w - t.x, t.x + t.w - x);
+        var penY = Math.min(y + h - t.y, t.y + t.h - y);
+        // push along the smaller (shallower) overlap so the item slides out
+        if(penX <= penY){
+          if(x + w - t.x <= t.x + t.w - x) x = t.x - w - E;   // exits on the left
+          else x = t.x + t.w + E;                              // exits on the right
+        } else {
+          if(y + h - t.y <= t.y + t.h - y) y = t.y - h - E;    // exits above
+          else y = t.y + t.h + E;                              // exits below
+        }
+        // keep inside the lot
+        x = Math.max(lotBox.x, Math.min(x, lotBox.x + lotBox.w - w));
+        y = Math.max(lotBox.y, Math.min(y, lotBox.y + lotBox.h - h));
+        moved = true;
+      }
+      if(!moved) break;
+    }
+    return { x:x, y:y };
+  }
+
   // Map a client/mouse position into SVG viewBox coordinates.
   function svgPoint(ev){
     var rect = svg.getBoundingClientRect();
@@ -415,18 +458,17 @@
       // clamp inside lot bounds
       nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
       ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
-      // snap boundaries flush to the house and other items
       if(state.snapOn){
-        var targets = [];
-        if(activeHouseBox) targets.push(activeHouseBox);
-        for(var ai=0;ai<activeItemBoxes.length;ai++){
-          if(activeItemBoxes[ai].id !== it.id) targets.push(activeItemBoxes[ai]);
-        }
-        var sn = edgeSnap(nx, ny, iw, ih, targets);
+        // snap boundaries flush to the house and other items
+        var sn = edgeSnap(nx, ny, iw, ih, dragTargets(it.id));
         nx = sn.x; ny = sn.y;
         nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
         ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
       }
+      // never overlap: only outside boundaries may touch outside boundaries.
+      // push the dragged item out to exact contact with the house/other items.
+      var no = resolveOverlap(nx, ny, iw, ih, dragTargets(it.id), lotBox);
+      nx = no.x; ny = no.y;
       state.items[it.id].x = nx;
       state.items[it.id].y = ny;
       rect.setAttribute('x', nx);
