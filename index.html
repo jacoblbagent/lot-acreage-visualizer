@@ -61,7 +61,11 @@
     transition:border-color .15s,color .15s;
   }
   .presets button:hover,.presets button.on{border-color:var(--accent);color:var(--accent)}
-  .items-hint{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.4}
+  .items-hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.4;margin-bottom:0}
+  .driveway-actions{display:flex;align-items:center;gap:10px;margin-top:10px}
+  .driveway-btn{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
+  .driveway-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .driveway-count{font-size:11px;color:var(--muted)}
   .snap-row{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;color:var(--text)}
   .switch{position:relative;width:38px;height:22px;flex:0 0 auto}
   .switch input{opacity:0;width:0;height:0;position:absolute}
@@ -138,6 +142,15 @@
       </div>
     </div>
 
+    <div class="group">
+      <h2>Driveway</h2>
+      <p class="items-hint">click on the lot to trace a driveway path — it expands to ~1.5× a car (about 9&nbsp;ft) wide. Double-click to finish.</p>
+      <div class="driveway-actions">
+        <button id="drivewayClear" class="driveway-btn">Clear</button>
+        <span id="drivewayCount" class="driveway-count">0 pts</span>
+      </div>
+    </div>
+
     <div class="group stats">
       <h2>Breakdown</h2>
       <div class="stat"><span class="k">Lot area</span><span class="v" id="statLotArea">—</span></div>
@@ -160,7 +173,8 @@
 (function(){
   var ACRE = 43560, PAD = 52, SIZE = 620;
   var state = { lotAcres:0.46, houseSqft:1450, shape:0, lotShape:0, items:{}, snapOn:true,
-               houseFx:null, houseFy:null };
+               houseFx:null, houseFy:null, driveway:[], drivewayDone:false };
+  var dwPointTimer = null;
 
   // Everyday structures with realistic average footprint sizes (width × depth, ft)
   var ITEMS = [
@@ -294,6 +308,29 @@
     var lxs = (W*scale < 110) ? 10 : 22;
     txt(SIZE/2, ly+D*scale+lxs, footLabel(W));
     txt(lx-lxs, ly+D*scale/2, footLabel(D), { anchor:'end' });
+
+    // ---- driveway (click-traced path, expanded to ~1.5× car width) ----
+    if(state.driveway.length > 1){
+      var dwFt = 6 * 1.5;              // 1.5× a car's width (car ≈ 6 ft)
+      var dwPx = dwFt * scale;
+      var pts = state.driveway.map(function(pt){ return pt.x + ',' + pt.y; }).join(' ');
+      // clip the driveway to the lot boundary so it is cut off at the edge
+      var dvClip = el('clipPath', { id:'dvClip' });
+      el('rect', { x:lotBox.x, y:lotBox.y, width:lotBox.w, height:lotBox.h }, dvClip);
+      var dvGroup = el('g', { 'clip-path':'url(#dvClip)' });
+      // transparent grab/hit area (a bit wider than the pavement) for easy selection
+      el('polyline', { points:pts, fill:'none', stroke:'rgba(255,255,255,0.001)', 'stroke-width':dwPx+18,
+        'stroke-linecap':'round', 'stroke-linejoin':'round', 'cursor':'move', 'pointer-events':'stroke' }, dvGroup);
+      // main pavement
+      el('polyline', { points:pts, fill:'none', stroke:'#565d6b', 'stroke-width':dwPx,
+        'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-opacity':0.9,
+        'pointer-events':'none' }, dvGroup);
+      // subtle centerline
+      el('polyline', { points:pts, fill:'none', stroke:'#3a4150', 'stroke-width':1,
+        'stroke-linecap':'round', 'stroke-linejoin':'round', 'stroke-dasharray':'5 6',
+        'stroke-opacity':0.6, 'pointer-events':'none' }, dvGroup);
+      makeDrivewayDraggable(dvGroup, dwPx);
+    }
 
     // ---- structures / items (place in yard, then freely draggable) ----
     var houseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
@@ -493,6 +530,40 @@
     }
   }
 
+  // Drag the whole driveway path as a unit. It is clipped to the lot, so any
+  // part pushed past the boundary is cut off; we also keep at least one point
+  // inside the lot so the user can't lose it entirely.
+  function makeDrivewayDraggable(group, dwPx){
+    group.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      var p = svgPoint(ev);
+      var start = { x:p.x, y:p.y, pts: state.driveway.map(function(pt){return {x:pt.x,y:pt.y};}) };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(e){
+        var q = svgPoint(e);
+        var dx = q.x - start.x, dy = q.y - start.y;
+        var moved = start.pts.map(function(pt){ return { x:pt.x+dx, y:pt.y+dy }; });
+        state.driveway = moved;
+        var lotD = lotDims();
+        var s = Math.min((SIZE-2*PAD)/lotD.w, (SIZE-2*PAD)/lotD.d);
+        var lx0 = (SIZE - lotD.w*s)/2, ly0 = (SIZE - lotD.d*s)/2;
+        var lb = { x:lx0, y:ly0, w:lotD.w*s, h:lotD.d*s };
+        state.driveway[0].x = Math.max(lb.x, Math.min(state.driveway[0].x, lb.x + lb.w));
+        state.driveway[0].y = Math.max(lb.y, Math.min(state.driveway[0].y, lb.y + lb.h));
+        render();
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+    });
+    // dragging also produces a click — don't let it add a new point
+    group.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    group.addEventListener('dblclick', function(ev){ ev.stopPropagation(); });
+  }
+
   // Map a client/mouse position into SVG viewBox coordinates.
   function svgPoint(ev){
     var rect = svg.getBoundingClientRect();
@@ -631,6 +702,44 @@
     $id('snaptog').checked = true;
     $id('snaptog').addEventListener('change', function(){
       state.snapOn = this.checked;
+    });
+
+    // ---- driveway clicking ----
+    function insideBox(pt, b){
+      return b && pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h;
+    }
+    svg.addEventListener('click', function(ev){
+      if(state.drivewayDone) return;
+      var p = svgPoint(ev);
+      var dims = lotDims();
+      var lotS = Math.min((SIZE-2*PAD)/dims.w, (SIZE-2*PAD)/dims.d);
+      var lx = (SIZE - dims.w*lotS)/2, ly = (SIZE - dims.d*lotS)/2;
+      var L = { x:lx, y:ly, w:dims.w*lotS, h:dims.d*lotS };
+      if(!insideBox(p, L)) return;
+      if(insideBox(p, activeHouseBox)) return;
+      for(var k=0;k<activeItemBoxes.length;k++){
+        if(insideBox(p, activeItemBoxes[k])) return;
+      }
+      // defer the add so a quick second click (start of a double-click) cancels it
+      clearTimeout(dwPointTimer);
+      dwPointTimer = setTimeout(function(){
+        state.driveway.push({ x:p.x, y:p.y });
+        $id('drivewayCount').textContent = state.driveway.length + ' pt' + (state.driveway.length===1?'':'s');
+        render();
+      }, 260);
+    });
+    svg.addEventListener('dblclick', function(ev){
+      clearTimeout(dwPointTimer);   // cancel the pending single-click point
+      state.drivewayDone = true;
+    });
+
+    // clear driveway (also lets the user start a fresh one)
+    $id('drivewayClear').addEventListener('click', function(){
+      clearTimeout(dwPointTimer);
+      state.driveway = [];
+      state.drivewayDone = false;
+      $id('drivewayCount').textContent = '0 pts';
+      render();
     });
 
     window.addEventListener('resize', render);
