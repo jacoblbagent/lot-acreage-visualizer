@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lot Acreage Visualizer</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --border:#2a3040;
+    --text:#e6e9f0; --muted:#8b93a7; --accent:#58a6ff; --accent2:#5fd38a;
+    --radius:2px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    height:100vh;overflow:hidden;display:flex;flex-direction:column;
+  }
+  header{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:16px 22px;border-bottom:1px solid var(--border);background:var(--panel);
+  }
+  header h1{font-size:18px;font-weight:620;letter-spacing:.2px}
+  header .sub{color:var(--muted);font-size:13px;margin-left:auto}
+  main{display:grid;grid-template-columns:330px 1fr;flex:1;min-height:0}
+  .controls{background:var(--panel);border-right:1px solid var(--border);padding:20px;overflow-y:auto;min-height:0}
+  .group{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px}
+  .group h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:14px;font-weight:600}
+  .field{margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
+  .field label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--muted);margin-bottom:6px}
+  .field label small{color:var(--muted)}
+  input[type=text],input[type=number]{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    border-radius:var(--radius);padding:9px 11px;font-size:14px;font-family:inherit;outline:none;
+  }
+  input:focus{border-color:var(--accent)}
+  input[type=range]{
+    width:100%;-webkit-appearance:none;appearance:none;height:4px;background:var(--border);
+    border-radius:999px;outline:none;margin:6px 0 4px;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--accent);border:2px solid #fff;cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:16px;height:16px;border-radius:50%;background:var(--accent);border:2px solid #fff;cursor:pointer;
+  }
+  .range-readout{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:2px}
+  .range-readout b{color:var(--accent);font-weight:600}
+  .seg-toggle{display:flex;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .seg-toggle button{
+    flex:1;background:transparent;border:none;color:var(--muted);padding:9px 4px;font-size:12px;
+    cursor:pointer;font-family:inherit;transition:background .15s;
+  }
+  .seg-toggle button.active{background:var(--accent);color:#0b0e14;font-weight:600}
+  .presets{display:flex;flex-wrap:wrap;gap:4px}
+  .presets button{
+    background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);
+    padding:3px 7px;font-size:12px;cursor:pointer;font-family:inherit;line-height:1;
+    transition:border-color .15s,color .15s;
+  }
+  .presets button:hover,.presets button.on{border-color:var(--accent);color:var(--accent)}
+  .items-hint{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.4}
+  .snap-row{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;color:var(--text)}
+  .switch{position:relative;width:38px;height:22px;flex:0 0 auto}
+  .switch input{opacity:0;width:0;height:0;position:absolute}
+  .switch .knob{position:absolute;inset:0;background:var(--border);border-radius:999px;transition:background .18s;cursor:pointer}
+  .switch .knob::before{content:'';position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .18s}
+  .switch input:checked + .knob{background:var(--accent)}
+  .switch input:checked + .knob::before{transform:translateX(16px)}
+  .stats{margin-top:16px}
+  .stat{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .stat:last-child{border-bottom:none}
+  .stat .k{color:var(--muted)}
+  .stat .v{font-weight:600;color:var(--text);text-align:right}
+  .stat .v.accent{color:var(--accent)}
+  .stat .v.green{color:var(--accent2)}
+  .chart{background:var(--bg);position:relative;display:flex;align-items:center;justify-content:center;padding:16px;min-height:0;overflow:hidden}
+  #view{width:min(78vh,760px);height:auto}
+  footer{padding:12px 22px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
+  @media(max-width:760px){
+    main{grid-template-columns:1fr}
+    .controls{order:2;border-right:none;border-top:1px solid var(--border)}
+    .chart{order:1;min-height:60vh}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lot Acreage Visualizer</h1>
+  <span class="sub">single-story home footprint on your parcel, to scale</span>
+</header>
+<main>
+  <div class="controls">
+    <div class="group">
+      <h2>Lot (parcel)</h2>
+      <div class="field">
+        <label><span>Lot acreage</span></label>
+        <input type="text" id="lotAcres" value="0.46" inputmode="decimal">
+        <div class="presets" id="presets">
+          <button data-a="0.25">¼</button>
+          <button data-a="0.5">½</button>
+          <button data-a="1">1</button>
+          <button data-a="2">2</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>House (single-story)</h2>
+      <div class="field">
+        <label><span>Square footage</span></label>
+        <input type="range" id="houseSqft" min="400" max="2500" step="25" value="1450" autocomplete="off">
+        <div class="range-readout">
+          <span>400</span><b id="houseSqftVal">1,450</b><span>2,500</span>
+        </div>
+      </div>
+      <div class="field">
+        <label><span>Shape</span><b id="shapeVal" style="color:var(--accent);font-weight:600">1 : 1</b></label>
+        <input type="range" id="shape" min="-1" max="1" step="0.05" value="0" autocomplete="off">
+        <div class="range-readout"><span>Wide</span><span>Tall</span></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Structures &amp; Items</h2>
+      <div class="presets" id="items"></div>
+      <div class="items-hint">average sizes · toggled items are placed in the yard</div>
+      <div class="snap-row">
+        <span>Snap placement (5&nbsp;ft grid)</span>
+        <label class="switch"><input type="checkbox" id="snaptog" checked><span class="knob"></span></label>
+      </div>
+    </div>
+
+    <div class="group stats">
+      <h2>Breakdown</h2>
+      <div class="stat"><span class="k">Lot area</span><span class="v" id="statLotArea">—</span></div>
+      <div class="stat"><span class="k">Lot acreage</span><span class="v accent" id="statLotAcres">—</span></div>
+      <div class="stat"><span class="k">House footprint</span><span class="v" id="statHouse">—</span></div>
+      <div class="stat"><span class="k">House % of lot</span><span class="v green" id="statHousePct">—</span></div>
+      <div class="stat"><span class="k">Structures</span><span class="v" id="statStructures">—</span></div>
+      <div class="stat"><span class="k">Open yard</span><span class="v" id="statYard">—</span></div>
+      <div class="stat"><span class="k">Yard acreage</span><span class="v" id="statYardAcres">—</span></div>
+    </div>
+  </div>
+
+  <div class="chart">
+    <svg id="view" width="620" height="620" viewBox="0 0 620 620"></svg>
+  </div>
+</main>
+<footer>1 acre = 43,560 sq ft · house shown as a single-story footprint (footprint area = square footage)</footer>
+
+<script>
+(function(){
+  var ACRE = 43560, PAD = 52, SIZE = 620;
+  var state = { lotAcres:0.46, houseSqft:1450, shape:0, items:{}, snapOn:true };
+
+  // Everyday structures with realistic average footprint sizes (width × depth, ft)
+  var ITEMS = [
+    { id:'garage1',  name:'1-car garage', w:12, d:20, color:'#8b93a7' },
+    { id:'garage2',  name:'2-car garage', w:22, d:24, color:'#7d879c' },
+    { id:'car',      name:'Car',          w:6,  d:16, color:'#e0672b' },
+    { id:'shed',     name:'Shed',         w:10, d:12, color:'#a8906a' },
+    { id:'deck',     name:'Deck',         w:16, d:12, color:'#c9a86a' },
+    { id:'patio',    name:'Patio',        w:14, d:14, color:'#9aa5b1' },
+    { id:'pool',     name:'Pool',         w:16, d:32, color:'#58a6ff' },
+    { id:'hottub',   name:'Hot tub',      w:7,  d:7,  color:'#5fd38a' },
+    { id:'playset',  name:'Play set',     w:10, d:12, color:'#e3b341' },
+    { id:'garden',   name:'Garden',       w:8,  d:16, color:'#7fb069' },
+    { id:'firepit',  name:'Fire pit',     w:5,  d:5,  color:'#e0672b' },
+    { id:'dogrun',   name:'Dog run',      w:8,  d:20, color:'#b08968' },
+    { id:'greenhouse',name:'Greenhouse',  w:10, d:12, color:'#8fd3a0' },
+    { id:'coop',     name:'Chicken coop', w:8,  d:10, color:'#d2a04a' }
+  ];
+
+  var svg = document.getElementById('view');
+  var NS = 'http://www.w3.org/2000/svg';
+
+  // shared drag-feedback refs (set each render, used by makeDraggable)
+  var activeHouseBox = null;   // current house pixel bounds
+  var houseOverlay = null;     // red overlay rect shown while dragging over the house
+  var activeItemBoxes = [];    // {id,x,y,w,h} for every currently-viewed item
+  var itemOverlays = {};       // id -> red overlay rect for each item
+
+  function $id(i){ return document.getElementById(i); }
+  function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
+  function fmtAcres(a){ return a.toFixed(3); }
+  function clearSvg(){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
+
+  function el(tag, attrs, parent){
+    var e = document.createElementNS(NS, tag);
+    if(attrs){ for(var k in attrs){ e.setAttribute(k, attrs[k]); } }
+    (parent || svg).appendChild(e);
+    return e;
+  }
+  function txt(x, y, s, o){
+    o = o || {};
+    el('text', { x:x, y:y, 'text-anchor':o.anchor||'middle', 'font-size':o.size||12,
+      fill:o.fill||'#8b93a7', 'font-weight':o.weight||'normal' }).textContent = s;
+  }
+
+  function lotDims(){
+    // lot always uses fixed 1:1.5 (width:depth) shape
+    var area = state.lotAcres * ACRE;
+    var w = Math.sqrt(area/1.5), d = area/w;
+    return { w:w, d:d };
+  }
+  function shapeLabel(ratio){
+    if(ratio >= 1) return ratio.toFixed(1) + ' : 1';   // wider than tall
+    return '1 : ' + (1/ratio).toFixed(1);              // taller than wide
+  }
+  function footLabel(n){
+    if(n >= 100) return fmt(n) + '\u2032';
+    return Math.round(n) + '\u2032';
+  }
+
+  function render(){
+    var dims = lotDims(), W = dims.w, D = dims.d;
+    var lotSqft = W * D;
+    if(lotSqft <= 0 || !isFinite(lotSqft)) return;
+
+    // scale to fit
+    var avail = SIZE - 2*PAD;
+    var scale = Math.min(avail/W, avail/D);
+
+    clearSvg();
+    svg.setAttribute('viewBox', '0 0 '+SIZE+' '+SIZE);
+
+    var lx = (SIZE - W*scale)/2, ly = (SIZE - D*scale)/2;
+
+    // lot outline
+    el('rect', { x:lx, y:ly, width:W*scale, height:D*scale,
+      fill:'#1a222e', stroke:'#3d4c63', 'stroke-width':1.5 });
+
+    // yard guide (dashed inner)
+    var inset = Math.max(6, Math.min(W*scale, D*scale)*0.02);
+    el('rect', { x:lx+inset, y:ly+inset, width:Math.max(0,W*scale-2*inset),
+      height:Math.max(0,D*scale-2*inset), fill:'none', stroke:'#2b3a52',
+      'stroke-width':1, 'stroke-dasharray':'4 4' });
+
+    // house footprint — width:depth ratio from shape slider; 0=square, neg=wider, pos=taller
+    var hArea = state.houseSqft;
+    var hRatio = Math.pow(1.8, -state.shape);   // width:depth; middle (0) => 1:1 square
+    var hWidth = Math.sqrt(hArea * hRatio);
+    var hDepth = hArea / hWidth;
+
+    // clamp house inside the lot (single-story must fit)
+    var maxW = W*0.96, maxD = D*0.96;
+    if(hWidth > maxW || hDepth > maxD){
+      var r = Math.min(maxW/hWidth, maxD/hDepth);
+      hWidth *= r; hDepth *= r;
+    }
+
+    var hx = lx + (W*scale - hWidth*scale)/2;
+    var hy = ly + (D*scale - hDepth*scale)/2;
+    el('rect', { x:hx, y:hy, width:hWidth*scale, height:hDepth*scale,
+      fill:'#58a6ff', 'fill-opacity':0.35, stroke:'#58a6ff', 'stroke-width':2 });
+
+    // red overlay shown while an item is dragged over the house (no permanent border)
+    activeHouseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
+    houseOverlay = el('rect', { x:hx, y:hy, width:hWidth*scale, height:hDepth*scale,
+      fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
+
+    // house label
+    var hsq = fmt(hWidth*hDepth) + ' sq ft';
+    var hwPx = hWidth*scale, hdPx = hDepth*scale;
+    if(hwPx > 60 && hdPx > 26){
+      var lo = el('text', { x:hx+hwPx/2, y:hy+hdPx/2+4, 'text-anchor':'middle',
+        'font-size':'13', fill:'#0b0e14', 'font-weight':'700' });
+      lo.textContent = hsq;
+    } else {
+      txt(hx+hwPx/2, hy+hdPx/2+3, fmt(hWidth*hDepth), { size:10, fill:'#0b0e14', weight:'700' });
+    }
+
+    // dimension labels
+    var lw = Math.round(W*scale), ld = Math.round(D*scale);
+    var lxs = (W*scale < 110) ? 10 : 22;
+    txt(SIZE/2, ly+D*scale+lxs, footLabel(W));
+    txt(lx-lxs, ly+D*scale/2, footLabel(D), { anchor:'end' });
+
+    // ---- structures / items (place in yard, then freely draggable) ----
+    var lotBox = { x:lx, y:ly, w:W*scale, h:D*scale };
+    var houseBox = { x:hx, y:hy, w:hWidth*scale, h:hDepth*scale };
+    var structSqft = 0;
+    activeItemBoxes = [];
+    itemOverlays = {};
+    // existing laid-out items form the "occupied" set, so new items avoid them
+    var placedBoxes = [];
+    ITEMS.forEach(function(it){
+      if((it.id in state.items) && state.items[it.id] !== null){
+        placedBoxes.push({ x:state.items[it.id].x, y:state.items[it.id].y,
+          w:it.w*scale, h:it.d*scale });
+      }
+    });
+    ITEMS.forEach(function(it){
+      if(!(it.id in state.items)) return;
+      var iw = it.w*scale, ih = it.d*scale;
+      var pos = state.items[it.id];
+      // auto-place the first time an item is added, avoiding all already-placed items
+      if(pos === null){
+        var slot = findSlot(lotBox, iw, ih, houseBox, placedBoxes);
+        if(!slot) return;   // no room — skip
+        state.items[it.id] = { x:slot.x, y:slot.y };
+        pos = state.items[it.id];
+        placedBoxes.push({ x:pos.x, y:pos.y, w:iw, h:ih });
+      } else {
+        // keep an existing item inside the (possibly resized) lot
+        pos.x = Math.max(lotBox.x, Math.min(pos.x, lotBox.x + lotBox.w - iw));
+        pos.y = Math.max(lotBox.y, Math.min(pos.y, lotBox.y + lotBox.h - ih));
+      }
+      structSqft += it.w * it.d;
+      var r = el('rect', { x:pos.x, y:pos.y, width:iw, height:ih,
+        fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.5,
+        'stroke-dasharray':'2 2', 'cursor':'move' });
+      // record for drag-over collision + red overlay
+      activeItemBoxes.push({ id:it.id, x:pos.x, y:pos.y, w:iw, h:ih });
+      itemOverlays[it.id] = el('rect', { x:pos.x, y:pos.y, width:iw, height:ih,
+        fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
+      var lbl = it.name + ' ' + it.w + '\u00d7' + it.d + '\u2032';
+      var labelEl = null;
+      if(iw > 34 && ih > 20){
+        labelEl = el('text', { x:pos.x+iw/2, y:pos.y+ih/2+3.5, 'text-anchor':'middle',
+          'font-size':'9', fill:'#0b0e14', 'font-weight':'600', 'pointer-events':'none' });
+        labelEl.textContent = lbl;
+      }
+      makeDraggable(r, it, iw, ih, lotBox, labelEl);
+    });
+
+    // stats
+    $id('shapeVal').textContent = shapeLabel(hWidth / hDepth);
+    $id('statLotArea').textContent  = fmt(lotSqft) + ' sq ft';
+    $id('statLotAcres').textContent = fmtAcres(lotSqft/ACRE) + ' ac';
+    $id('statHouse').textContent    = fmt(hWidth*hDepth) + ' sq ft';
+    var pct = lotSqft ? (hWidth*hDepth)/lotSqft*100 : 0;
+    $id('statHousePct').textContent = pct.toFixed(1) + '%';
+    $id('statStructures').textContent = structSqft ? fmt(structSqft)+' sq ft' : '\u2014';
+    var yard = Math.max(0, lotSqft - hWidth*hDepth - structSqft);
+    $id('statYard').textContent      = fmt(yard) + ' sq ft';
+    $id('statYardAcres').textContent = fmtAcres(yard/ACRE) + ' ac';
+  }
+
+  // Find a free spot in the lot for a w×h (px) box, avoiding the house and prior items.
+  function findSlot(lotBox, w, h, houseBox, placedBoxes){
+    var margin = 6, gap = 6, step = 6;
+    for(var y = lotBox.y+margin; y + h <= lotBox.y+lotBox.h-margin; y += step){
+      for(var x = lotBox.x+margin; x + w <= lotBox.x+lotBox.w-margin; x += step){
+        var box = { x:x, y:y, w:w, h:h };
+        if(overlaps(box, houseBox, gap)) continue;
+        var clash = false;
+        for(var i=0;i<placedBoxes.length;i++){
+          if(overlaps(box, placedBoxes[i], gap)){ clash = true; break; }
+        }
+        if(!clash) return box;
+      }
+    }
+    return null;
+  }
+  function overlaps(a, b, gap){
+    return a.x < b.x+b.w+gap && a.x+a.w+gap > b.x && a.y < b.y+b.h+gap && a.y+a.h+gap > b.y;
+  }
+
+  // Snap the dragged box's boundaries flush against any target box edges that
+  // come within SNAP (px). Snaps each axis independently, picking the nearest
+  // matching edge (left/right/top/bottom alignment with each target).
+  function edgeSnap(x, y, w, h, targets){
+    var SNAP = 12, fx = x, fy = y;
+    var foundX = false, dx = 1e9;
+    for(var i=0;i<targets.length;i++){
+      var t = targets[i];
+      var xs = [t.x, t.x + t.w, t.x - w, t.x + t.w - w]; // our left/right to their left/right
+      for(var xi=0;xi<4;xi++){
+        var d = Math.abs(xs[xi] - x);
+        if(d <= SNAP && d < dx){ fx = xs[xi]; dx = d; foundX = true; }
+      }
+    }
+    var foundY = false, dy = 1e9;
+    for(var j=0;j<targets.length;j++){
+      var t2 = targets[j];
+      var ys = [t2.y, t2.y + h, t2.y + t2.h, t2.y + t2.h - h]; // our-top/bottom to their top/bottom
+      for(var yi=0;yi<4;yi++){
+        var d2 = Math.abs(ys[yi] - y);
+        if(d2 <= SNAP && d2 < dy){ fy = ys[yi]; dy = d2; foundY = true; }
+      }
+    }
+    return { x: foundX ? fx : x, y: foundY ? fy : y };
+  }
+
+  // Map a client/mouse position into SVG viewBox coordinates.
+  function svgPoint(ev){
+    var rect = svg.getBoundingClientRect();
+    return {
+      x: (ev.clientX - rect.left) * (SIZE / rect.width),
+      y: (ev.clientY - rect.top) * (SIZE / rect.height)
+    };
+  }
+
+  // Drag an item rect anywhere within the lot bounds, clamped on all sides.
+  function makeDraggable(rect, it, iw, ih, lotBox, labelEl){
+    var start = null;
+    rect.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      var p = svgPoint(ev);
+      start = {
+        dx: p.x - state.items[it.id].x,
+        dy: p.y - state.items[it.id].y
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    function onMove(ev){
+      if(!start) return;
+      var p = svgPoint(ev);
+      var nx = p.x - start.dx, ny = p.y - start.dy;
+      // clamp inside lot bounds
+      nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
+      ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+      // snap boundaries flush to the house and other items
+      if(state.snapOn){
+        var targets = [];
+        if(activeHouseBox) targets.push(activeHouseBox);
+        for(var ai=0;ai<activeItemBoxes.length;ai++){
+          if(activeItemBoxes[ai].id !== it.id) targets.push(activeItemBoxes[ai]);
+        }
+        var sn = edgeSnap(nx, ny, iw, ih, targets);
+        nx = sn.x; ny = sn.y;
+        nx = Math.max(lotBox.x, Math.min(nx, lotBox.x + lotBox.w - iw));
+        ny = Math.max(lotBox.y, Math.min(ny, lotBox.y + lotBox.h - ih));
+      }
+      state.items[it.id].x = nx;
+      state.items[it.id].y = ny;
+      rect.setAttribute('x', nx);
+      rect.setAttribute('y', ny);
+      // keep the label centered on the moving item
+      if(labelEl){
+        labelEl.setAttribute('x', nx + iw/2);
+        labelEl.setAttribute('y', ny + ih/2 + 3.5);
+      }
+      // show red overlay when the dragged item overlaps the house
+      var over = overlaps({ x:nx, y:ny, w:iw, h:ih }, activeHouseBox, 0);
+      if(houseOverlay) houseOverlay.setAttribute('fill-opacity', over ? 0.45 : 0);
+      // ...or overlaps another item
+      for(var k=0;k<activeItemBoxes.length;k++){
+        var ob = activeItemBoxes[k];
+        if(ob.id === it.id) continue;           // skip the item being dragged
+        var isOver = overlaps({ x:nx, y:ny, w:iw, h:ih }, ob, 0);
+        if(itemOverlays[ob.id]) itemOverlays[ob.id].setAttribute('fill-opacity', isOver ? 0.45 : 0);
+      }
+    }
+    function onUp(){
+      start = null;
+      if(houseOverlay) houseOverlay.setAttribute('fill-opacity', 0);
+      for(var k=0;k<activeItemBoxes.length;k++){
+        if(itemOverlays[activeItemBoxes[k].id]) itemOverlays[activeItemBoxes[k].id].setAttribute('fill-opacity', 0);
+      }
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+  }
+
+  function init(){
+    // lot acreage input
+    $id('lotAcres').addEventListener('input', function(){
+      var v = parseFloat(this.value);
+      if(!isNaN(v) && v > 0){ state.lotAcres = v; render(); }
+    });
+
+    // shape slider: 0=middle, negative=wider, positive=taller
+    $id('shape').addEventListener('input', function(){
+      state.shape = parseFloat(this.value);
+      render();
+    });
+
+    // acreage quick sizes
+    document.querySelectorAll('#presets button').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        state.lotAcres = parseFloat(btn.dataset.a);
+        $id('lotAcres').value = state.lotAcres;
+        document.querySelectorAll('#presets button').forEach(function(b){ b.classList.remove('on'); });
+        btn.classList.add('on');
+        render();
+      });
+    });
+
+    // house sqft
+    $id('houseSqft').addEventListener('input', function(){
+      state.houseSqft = parseInt(this.value, 10);
+      $id('houseSqftVal').textContent = fmt(state.houseSqft);
+      render();
+    });
+
+    // build item toggles
+    var itemsWrap = $id('items');
+    ITEMS.forEach(function(it){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.id = it.id;
+      btn.textContent = it.name;
+      btn.title = it.w + '\u00d7' + it.d + '\u2032';
+      btn.addEventListener('click', function(){
+        if(it.id in state.items){ delete state.items[it.id]; btn.classList.remove('on'); }
+        else { state.items[it.id] = null; btn.classList.add('on'); }
+        render();
+      });
+      itemsWrap.appendChild(btn);
+    });
+
+    // snap placement toggle
+    $id('snaptog').addEventListener('change', function(){
+      state.snapOn = this.checked;
+    });
+
+    window.addEventListener('resize', render);
+    render();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
