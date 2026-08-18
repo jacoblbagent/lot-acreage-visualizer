@@ -367,52 +367,55 @@
       if(!(it.id in state.items)) return;
       var iw = it.w*scale, ih = it.d*scale;
       var pos = state.items[it.id];
+      var dx, dy;
       // auto-place the first time an item is added, avoiding all already-placed items
       if(pos === null){
         var slot = findSlot(lotBox, iw, ih, houseBox, placedBoxes);
         if(!slot) return;   // no room — skip
         state.items[it.id] = { x:slot.x, y:slot.y };
         pos = state.items[it.id];
-        placedBoxes.push({ x:pos.x, y:pos.y, w:iw, h:ih });
+        dx = slot.x; dy = slot.y;
+        placedBoxes.push({ x:dx, y:dy, w:iw, h:ih });
       } else {
-        // keep an existing item inside the (possibly resized) lot
-        pos.x = Math.max(lotBox.x, Math.min(pos.x, lotBox.x + lotBox.w - iw));
-        pos.y = Math.max(lotBox.y, Math.min(pos.y, lotBox.y + lotBox.h - ih));
+        // CLAMP FOR DISPLAY ONLY — never overwrite the committed position, so
+        // items pushed inward by a smaller lot return when the lot grows back.
+        dx = Math.max(lotBox.x, Math.min(pos.x, lotBox.x + lotBox.w - iw));
+        dy = Math.max(lotBox.y, Math.min(pos.y, lotBox.y + lotBox.h - ih));
       }
       structSqft += it.tree ? (it.w*it.w*Math.PI/4) : (it.w * it.d);
       var r, labelEl = null, canopy = null;
       if(it.tree){
         // draw a translucent canopy + trunk, draggable as a unit
         var r = el('g', { 'cursor':'move' });
-        r._bx = pos.x; r._by = pos.y;   // base top-left for translate math
+        r._bx = dx; r._by = dy;   // base top-left for translate math
         var trunkH = Math.max(2, ih*0.18);
-        el('rect', { x:pos.x+iw/2-iw*0.06, y:pos.y+ih-trunkH, width:iw*0.12, height:trunkH,
+        el('rect', { x:dx+iw/2-iw*0.06, y:dy+ih-trunkH, width:iw*0.12, height:trunkH,
           fill:'#7a5636' }, r);
-        canopy = el('circle', { cx:pos.x+iw/2, cy:pos.y+ih*0.45, r:Math.max(3, iw*0.42),
+        canopy = el('circle', { cx:dx+iw/2, cy:dy+ih*0.45, r:Math.max(3, iw*0.42),
           fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.2,
           cursor:'move' }, r);
-        labelEl = el('text', { x:pos.x+iw/2, y:pos.y+ih*0.45 - Math.max(3, iw*0.42) - 4,
+        labelEl = el('text', { x:dx+iw/2, y:dy+ih*0.45 - Math.max(3, iw*0.42) - 4,
           'text-anchor':'middle', 'font-size':'9', fill:'#d7dbe4', 'font-weight':'600',
           'pointer-events':'none' });
         labelEl.textContent = it.name;
       } else {
-        r = el('rect', { x:pos.x, y:pos.y, width:iw, height:ih,
+        r = el('rect', { x:dx, y:dy, width:iw, height:ih,
           fill:it.color, 'fill-opacity':0.45, stroke:it.color, 'stroke-width':1.5,
           'stroke-dasharray':'2 2', 'cursor':'move' });
         var lbl = it.name + ' ' + it.w + '\u00d7' + it.d + '\u2032';
         if(iw > 34 && ih > 22){
-          labelEl = el('text', { x:pos.x+iw/2, y:pos.y+ih/2+3.5, 'text-anchor':'middle',
+          labelEl = el('text', { x:dx+iw/2, y:dy+ih/2+3.5, 'text-anchor':'middle',
             'font-size':'9', fill:'#0b0e14', 'font-weight':'600', 'pointer-events':'none' });
           labelEl.textContent = lbl;
         } else {
-          labelEl = el('text', { x:pos.x+iw/2, y:Math.max(0, pos.y-5), 'text-anchor':'middle',
+          labelEl = el('text', { x:dx+iw/2, y:Math.max(0, dy-5), 'text-anchor':'middle',
             'font-size':'9', fill:'#d7dbe4', 'font-weight':'600', 'pointer-events':'none' });
           labelEl.textContent = lbl;
         }
       }
       // record for drag-over collision + red overlay
-      activeItemBoxes.push({ id:it.id, x:pos.x, y:pos.y, w:iw, h:ih });
-      itemOverlays[it.id] = el('rect', { x:pos.x, y:pos.y, width:iw, height:ih,
+      activeItemBoxes.push({ id:it.id, x:dx, y:dy, w:iw, h:ih });
+      itemOverlays[it.id] = el('rect', { x:dx, y:dy, width:iw, height:ih,
         fill:'#da3633', 'fill-opacity':0, 'pointer-events':'none' });
       if(it.tree){
         makeTreeDraggable(r, it, iw, ih, lotBox, labelEl, canopy);
@@ -777,7 +780,7 @@ function makeDrivewayDraggable(group, dwPx){
       state.lastInteract = { type:'item', id:it.id };
       beginChange();
       var p = svgPoint(ev);
-      start = { dx: p.x - group._bx, dy: p.y - group._by, ox: state.items[it.id].x, oy: state.items[it.id].y };
+      start = { dx: p.x - group._bx, dy: p.y - group._by, ox: group._bx, oy: group._by };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
@@ -844,10 +847,13 @@ function makeDrivewayDraggable(group, dwPx){
       state.lastInteract = { type:'item', id:it.id };
       beginChange();
       var p = svgPoint(ev);
+      // offset from the DISPLAYED position (committed may have been clamped inward)
+      var bx = Math.max(lotBox.x, Math.min(state.items[it.id].x, lotBox.x + lotBox.w - iw));
+      var by = Math.max(lotBox.y, Math.min(state.items[it.id].y, lotBox.y + lotBox.h - ih));
       start = {
-        dx: p.x - state.items[it.id].x,
-        dy: p.y - state.items[it.id].y,
-        ox: state.items[it.id].x, oy: state.items[it.id].y
+        dx: p.x - bx,
+        dy: p.y - by,
+        ox: bx, oy: by
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
