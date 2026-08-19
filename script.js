@@ -5,6 +5,11 @@
                houseFx:null, houseFy:null, driveway:[], drivewayDone:false,
                lotW:null, lotD:null,
                lastInteract:null, history:[] };
+  // ---- custom lot boundary (empty = rectangle from W/D) ----
+  var borderPts = [];       // [{x,y},...] ring defining the lot polygon (px)
+  var editBorder = false;   // shape-edit / multi-select mode
+  var selSegs = {};         // set of selected segment ids "i-j"
+  var BORDER_SUBDIV = 3;    // subdivisions per edge for finer control
   var UID = 1;                 // unique instance id counter
   var LS_KEY = 'lotAcreageViz';
   var HISTORY_CAP = 200;
@@ -75,7 +80,9 @@
       items: items,
       driveway: state.driveway.map(function(p){ return {x:p.x, y:p.y}; }),
       drivewayDone: state.drivewayDone,
-      houseFx: state.houseFx, houseFy: state.houseFy
+      houseFx: state.houseFx, houseFy: state.houseFy,
+      border: borderPts.map(function(p){ return {x:p.x, y:p.y}; }),
+      editBorder: editBorder
     };
   }
   function applyScene(s){
@@ -83,6 +90,9 @@
     state.driveway = s.driveway.map(function(p){ return {x:p.x, y:p.y}; });
     state.drivewayDone = s.drivewayDone;
     state.houseFx = s.houseFx; state.houseFy = s.houseFy;
+    borderPts = (s.border||[]).map(function(p){ return {x:p.x, y:p.y}; });
+    editBorder = !!s.editBorder;
+    var st = $id('shapeToggleBtn'); if(st) st.classList.toggle('on', editBorder);
   }
   function beginChange(){ pendingSnap = snapScene(); }
   function commitChange(){
@@ -247,6 +257,55 @@
     return Math.round(n) + '\u2032';
   }
 
+  // ---- custom lot boundary (polygon) helpers ----
+  function buildBorderFromRect(lx, ly, w, h){
+    // ring of points around the rectangle, S subdivisions per edge
+    var pts = [], S = BORDER_SUBDIV, corners = [
+      [lx,ly],[lx+w,ly],[lx+w,ly+h],[lx,ly+h]
+    ];
+    for(var c=0;c<4;c++){
+      var a = corners[c], b = corners[(c+1)%4];
+      for(var i=0;i<S;i++){
+        var t = i/S;
+        pts.push({ x:a[0]+(b[0]-a[0])*t, y:a[1]+(b[1]-a[1])*t });
+      }
+    }
+    return pts;
+  }
+  function polyPath(pts){
+    if(!pts.length) return '';
+    var d = 'M ' + pts[0].x + ' ' + pts[0].y;
+    for(var i=1;i<pts.length;i++) d += ' L ' + pts[i].x + ' ' + pts[i].y;
+    return d + ' Z';
+  }
+  function polyBBox(pts){
+    var minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+    pts.forEach(function(p){ if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x; if(p.y<minY)minY=p.y; if(p.y>maxY)maxY=p.y; });
+    return { x:minX, y:minY, w:maxX-minX, h:maxY-minY };
+  }
+  function polyArea(pts){
+    var a=0, n=pts.length;
+    for(var i=0;i<n;i++){
+      var j=(i+1)%n;
+      a += pts[i].x*pts[j].y - pts[j].x*pts[i].y;
+    }
+    return Math.abs(a)/2;   // in px^2
+  }
+  // outward unit normal for the segment pts[i]->pts[(i+1)%n], away from centroid
+  function segNormal(pts, i){
+    var n=pts.length, a=pts[i], b=pts[(i+1)%n];
+    var e={ x:(b.x-a.x), y:(b.y-a.y) };
+    var len=Math.hypot(e.x,e.y)||1;
+    var nx = -e.y/len, ny = e.x/len;   // a normal (perp)
+    // centroid
+    var cx=0,cy=0; pts.forEach(function(p){ cx+=p.x; cy+=p.y; });
+    cx/=n; cy/=n;
+    var mid={ x:(a.x+b.x)/2, y:(a.y+b.y)/2 };
+    // flip so it points away from centroid
+    if((mid.x-cx)*nx + (mid.y-cy)*ny < 0){ nx=-nx; ny=-ny; }
+    return { x:nx, y:ny };
+  }
+
   function render(){
     var dims = lotDims(), W = dims.w, D = dims.d;
     var lotSqft = W * D;
@@ -260,32 +319,48 @@
     svg.setAttribute('viewBox', '0 0 '+SIZE+' '+SIZE);
 
     var lx = (SIZE - W*scale)/2, ly = (SIZE - D*scale)/2;
-    var lotBox = { x:lx, y:ly, w:W*scale, h:D*scale };
+    var rectBox = { x:lx, y:ly, w:W*scale, h:D*scale };
+    var lotBox = rectBox;
 
-    // lot outline — lawn surface
-    el('rect', { x:lx, y:ly, width:W*scale, height:D*scale,
-      fill:'#2c4a2e', stroke:'#3d4c63', 'stroke-width':1.5 });
+    // custom polygon lot? when active, draw/use the segment-defined shape
+    var custom = borderPts.length >= 3;
+    if(custom){
+      lotBox = polyBBox(borderPts);
+      lx = lotBox.x; ly = lotBox.y;
+    }
 
-    // yard guide (dashed inner)
-    var inset = Math.max(6, Math.min(W*scale, D*scale)*0.02);
-    el('rect', { x:lx+inset, y:ly+inset, width:Math.max(0,W*scale-2*inset),
-      height:Math.max(0,D*scale-2*inset), fill:'none', stroke:'#2b3a52',
-      'stroke-width':1, 'stroke-dasharray':'4 4' });
+    if(custom){
+      // lot as polygon — lawn surface + outline
+      el('path', { d:polyPath(borderPts), fill:'#2c4a2e', stroke:'#3d4c63', 'stroke-width':1.5, 'stroke-linejoin':'round' });
+    } else {
+      // lot outline — lawn surface
+      el('rect', { x:lx, y:ly, width:W*scale, height:D*scale,
+        fill:'#2c4a2e', stroke:'#3d4c63', 'stroke-width':1.5 });
+      // yard guide (dashed inner)
+      var inset = Math.max(6, Math.min(W*scale, D*scale)*0.02);
+      el('rect', { x:lx+inset, y:ly+inset, width:Math.max(0,W*scale-2*inset),
+        height:Math.max(0,D*scale-2*inset), fill:'none', stroke:'#2b3a52',
+        'stroke-width':1, 'stroke-dasharray':'4 4' });
+      // resize drag strips along the lot's boundary lines — grab anywhere on an edge
+      // to resize that dimension. Thin but full-length so the whole line is grabbable.
+      var ht = 8;   // hit thickness (in/out of the boundary)
+      var strip = [
+        { x:lx,        y:ly-ht/2,          w:W*scale,      h:ht, dir:'n', key:'D', sign:-1 }, // top
+        { x:lx,        y:ly+D*scale-ht/2,  w:W*scale,      h:ht, dir:'s', key:'D', sign:1  }, // bottom
+        { x:lx-ht/2,   y:ly,               w:ht,           h:D*scale, dir:'w', key:'W', sign:-1 }, // left
+        { x:lx+W*scale-ht/2, y:ly,         w:ht,           h:D*scale, dir:'e', key:'W', sign:1  }  // right
+      ];
+      strip.forEach(function(e){
+        var r = el('rect', { x:e.x, y:e.y, width:e.w, height:e.h, fill:'transparent',
+          cursor:(e.dir==='n'||e.dir==='s')?'ns-resize':'ew-resize' });
+        makeLotResize(r, e);
+      });
+    }
 
-    // resize drag strips along the lot's boundary lines — grab anywhere on an edge
-    // to resize that dimension. Thin but full-length so the whole line is grabbable.
-    var ht = 8;   // hit thickness (in/out of the boundary)
-    var strip = [
-      { x:lx,        y:ly-ht/2,          w:W*scale,      h:ht, dir:'n', key:'D', sign:-1 }, // top
-      { x:lx,        y:ly+D*scale-ht/2,  w:W*scale,      h:ht, dir:'s', key:'D', sign:1  }, // bottom
-      { x:lx-ht/2,   y:ly,               w:ht,           h:D*scale, dir:'w', key:'W', sign:-1 }, // left
-      { x:lx+W*scale-ht/2, y:ly,         w:ht,           h:D*scale, dir:'e', key:'W', sign:1  }  // right
-    ];
-    strip.forEach(function(e){
-      var r = el('rect', { x:e.x, y:e.y, width:e.w, height:e.h, fill:'transparent',
-        cursor:(e.dir==='n'||e.dir==='s')?'ns-resize':'ew-resize' });
-      makeLotResize(r, e);
-    });
+    // when editing the border, render the selectable boundary segments (multi-select)
+    if(custom && editBorder){
+      renderBorderSegments(borderPts);
+    }
 
     // house footprint — width:depth ratio from shape slider; 0=square, neg=wider, pos=taller
     var hArea = state.houseSqft;
@@ -460,13 +535,19 @@
     // stats
     $id('shapeVal').textContent = shapeLabel(hWidth / hDepth);
     $id('lotShapeVal').textContent = shapeLabel(W / D);
-    $id('statLotArea').textContent  = fmt(lotSqft) + ' sq ft';
-    $id('statLotAcres').textContent = fmtAcres(lotSqft/ACRE) + ' ac';
+    // stats: when custom polygon lot, acreage reflects the polygon's actual area
+    var statSqft = lotSqft;
+    if(custom && scale>0){
+      statSqft = polyArea(borderPts) / (scale*scale);
+      statSqft = Math.max(0, statSqft);
+    }
+    $id('statLotArea').textContent  = fmt(statSqft) + ' sq ft';
+    $id('statLotAcres').textContent = fmtAcres(statSqft/ACRE) + ' ac';
     $id('statHouse').textContent    = fmt(hWidth*hDepth) + ' sq ft';
-    var pct = lotSqft ? (hWidth*hDepth)/lotSqft*100 : 0;
+    var pct = statSqft ? (hWidth*hDepth)/statSqft*100 : 0;
     $id('statHousePct').textContent = pct.toFixed(1) + '%';
     $id('statStructures').textContent = structSqft ? fmt(structSqft)+' sq ft' : '\u2014';
-    var yard = Math.max(0, lotSqft - hWidth*hDepth - structSqft);
+    var yard = Math.max(0, statSqft - hWidth*hDepth - structSqft);
     $id('statYard').textContent      = fmt(yard) + ' sq ft';
     $id('statYardAcres').textContent = fmtAcres(yard/ACRE) + ' ac';
   }
@@ -558,6 +639,91 @@
       if(!moved) break;
     }
     return { x:x, y:y };
+  }
+
+  // ---- border segment editing (multi-select + radial drag) ----
+  // Draws each polygon edge as a thin selectable line + midpoint handle.
+  // Click toggles a segment's selection (multi-select); dragging a selected
+  // segment moves ALL selected segments outward/inward along their normals.
+  function renderBorderSegments(pts){
+    var n = pts.length;
+    for(var i=0;i<n;i++){
+      var a = pts[i], b = pts[(i+1)%n];
+      var sel = selSegs[i];
+      var mid = { x:(a.x+b.x)/2, y:(a.y+b.y)/2 };
+      var line = el('line', { x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke: sel? '#82aaff' : '#0b0e14',
+        'stroke-width': sel? 3 : 1, 'stroke-linecap':'round', 'pointer-events':'none' });
+      var hit = el('line', { x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke:'transparent',
+        'stroke-width':14, 'stroke-linecap':'round', cursor:'pointer' });
+      var h = el('circle', { cx:mid.x, cy:mid.y, r:4, fill: sel? '#82aaff' : '#dfe6f2',
+        stroke:'#0b0e14', 'stroke-width':1.2, cursor:'pointer' });
+      makeBorderSegment(h, i);
+      makeBorderSegment(hit, i);
+    }
+  }
+  // Toggle selection on click; start a radial drag that moves all selected
+  // segments outward/inward by the pointer's displacement along its own normal.
+  function makeBorderSegment(elm, idx){
+    elm.addEventListener('mousedown', function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      var n = borderPts.length;
+      beginChange();
+      var startPt = svgPoint(ev);
+      var baseline = borderPts.map(function(pt){ return { x:pt.x, y:pt.y }; });
+      var moved = false;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      function onMove(e){
+        var q = svgPoint(e);
+        var dx = q.x - startPt.x, dy = q.y - startPt.y;
+        if(!moved && Math.hypot(dx,dy) > 3){ moved = true; return; } // start drag
+        if(!moved) return;
+        // move every selected segment along its own outward normal by the
+        // pointer displacement projected onto that normal.
+        for(var i=0;i<n;i++){
+          if(!selSegs[i]) continue;
+          var nm = segNormal(borderPts, i);
+          var amt = dx*nm.x + dy*nm.y;   // outward(+)/inward(-)
+          borderPts[i].x = baseline[i].x + amt*nm.x;
+          borderPts[i].y = baseline[i].y + amt*nm.y;
+          borderPts[(i+1)%n].x = baseline[(i+1)%n].x + amt*nm.x;
+          borderPts[(i+1)%n].y = baseline[(i+1)%n].y + amt*nm.y;
+        }
+        render();
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if(!moved){
+          // a click (no drag) toggles this segment's selection
+          if(ev.shiftKey){
+            if(selSegs[idx]) delete selSegs[idx];
+            else selSegs[idx] = true;
+          } else {
+            selSegs = {};
+            selSegs[idx] = true;
+          }
+          pendingSnap = null;
+          saveState();
+          render();
+        } else {
+          commitChange();
+          recordHistory({ action:'shape' });
+          syncLotAcres();
+        }
+      }
+    });
+  }
+  function syncLotAcres(){
+    // recompute effective acreage from the polygon area (px^2 -> ft^2)
+    var dims = lotDims(), availS = SIZE - 2*PAD;
+    var sC = Math.min(availS/dims.w, availS/dims.d);
+    var px2 = polyArea(borderPts);          // px^2
+    var ft2 = px2 / (sC*sC);
+    if(ft2 > 0){ state.lotAcres = ft2/ACRE; }
+    var ai = $id('lotAcres'); if(ai) ai.value = state.lotAcres.toFixed(3);
+    document.querySelectorAll('#presets button').forEach(function(b){ b.classList.remove('on'); });
   }
 
   // Drag a lot edge handle to resize the lot's width/depth. Converts the pixel
@@ -1129,6 +1295,26 @@ function makeDrivewayDraggable(group, dwPx){
     $id('undoBtn').addEventListener('click', undo);
     $id('redoBtn').addEventListener('click', redo);
 
+    // ---- Shape edit toggle: enter/exit multi-select border editing ----
+    $id('shapeToggleBtn').addEventListener('click', function(){
+      if(!editBorder){
+        // enter edit mode: build a subdivided border ring from the current lot rect
+        var dims = lotDims();       // feet
+        var scr = Math.min((SIZE-2*PAD)/dims.w, (SIZE-2*PAD)/dims.d);
+        var rx = (SIZE - dims.w*scr)/2, ry = (SIZE - dims.d*scr)/2;
+        borderPts = buildBorderFromRect(rx, ry, dims.w*scr, dims.d*scr);
+        editBorder = true;
+        selSegs = {};
+        $id('shapeToggleBtn').classList.add('on');
+      } else {
+        editBorder = false;
+        $id('shapeToggleBtn').classList.remove('on');
+      }
+      // turn off the plain rectangle resize strips while shaping (implied by custom)
+      state.lotW = null; state.lotD = null;
+      render();
+    });
+
     // ---- Clear all: resets the whole scene in one undoable step ----
     $id('clearAllBtn').addEventListener('click', function(){
       var hadAnything =
@@ -1142,6 +1328,10 @@ function makeDrivewayDraggable(group, dwPx){
       state.drivewayDone = false;
       state.houseFx = null; state.houseFy = null;
       state.lastInteract = null;
+      borderPts = [];
+      editBorder = false;
+      selSegs = {};
+      $id('shapeToggleBtn').classList.remove('on');
       commitChange();
       recordHistory({ action:'clear-all' });
       syncButtons();
